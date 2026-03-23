@@ -1,0 +1,76 @@
+replicaCount: 1
+
+image:
+  repository: secure-messenger-backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  hosts:
+    - host: backend.local
+      paths:
+        - path: /api
+          pathType: Prefix
+        - path: /ws
+          pathType: Prefix
+  tls: []
+
+env:
+  DJANGO_DEBUG: "0"
+  DJANGO_ALLOWED_HOSTS: "backend.local,localhost,127.0.0.1"
+  CORS_ALLOW_ALL_ORIGINS: "0"
+  CORS_ALLOWED_ORIGINS: "https://frontend.local"
+  USE_POSTGRES: "1"
+  POSTGRES_DB: secure_messenger
+  POSTGRES_USER: postgres
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  USE_REDIS: "1"
+  REDIS_URL: redis://redis:6379/0
+  DJANGO_MEDIA_ROOT: /app/media
+
+persistence:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 5Gi
+  mountPath: /app/media
+
+existingSecretName: ""
+
+secretEnv:
+  DJANGO_SECRET_KEY: change-me
+  POSTGRES_PASSWORD: postgres
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    timeoutSeconds: 2
+    failureThreshold: 6
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 6
+
+migrationJob:
+  enabled: true
+  backoffLimit: 3

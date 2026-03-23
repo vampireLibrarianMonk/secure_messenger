@@ -53,8 +53,16 @@ npm install
 
 ### 4) Start frontend
 
+From the **project root**:
+
 ```bash
 VITE_API_BASE=http://127.0.0.1:8000/api VITE_WS_BASE=ws://127.0.0.1:8000 npm --prefix frontend run dev -- --host 127.0.0.1 --port 5175
+```
+
+Or if you are already inside `frontend/`:
+
+```bash
+VITE_API_BASE=http://127.0.0.1:8000/api VITE_WS_BASE=ws://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 5175
 ```
 
 Open: `http://127.0.0.1:5175`

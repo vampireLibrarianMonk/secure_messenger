@@ -12,3 +12,6 @@ frontend/dist/
 # Env
 .env
 .idea/
+
+# Media
+frontend/media/attachments

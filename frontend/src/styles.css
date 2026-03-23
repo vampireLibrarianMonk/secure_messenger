@@ -92,6 +92,12 @@ body {
   margin-bottom: 0.7rem;
 }
 
+.video-head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .video-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -131,6 +137,30 @@ body {
   margin-top: 0.6rem;
   border-top: 1px dashed #334155;
   padding-top: 0.5rem;
+}
+
+.video-diagnostics-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+}
+
+.video-diagnostics-toggle input {
+  width: auto;
+}
+
+.video-diagnostics-panel {
+  margin-top: 0.65rem;
+  padding: 0.55rem;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.6);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.75rem;
+  font-size: 0.82rem;
 }
 
 .video-debug summary {
@@ -219,6 +249,20 @@ button { cursor: pointer; }
   }
 
   .video-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .video-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .video-head-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .video-diagnostics-panel {
     grid-template-columns: 1fr;
   }
 }

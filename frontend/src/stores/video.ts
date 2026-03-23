@@ -21,10 +21,46 @@ interface VideoState {
   playOutgoingRing: boolean;
   playIncomingRing: boolean;
   isDialing: boolean;
+  diagnosticsEnabled: boolean;
+  diagnostics: {
+    localFps: number | null;
+    remoteFps: number | null;
+    localResolution: string | null;
+    remoteResolution: string | null;
+    outboundKbps: number | null;
+    inboundKbps: number | null;
+    packetLossPct: number | null;
+    rttMs: number | null;
+    updatedAt: number | null;
+  };
+  diagnosticsError: string;
+  diagnosticsTimer: number | null;
+  previousStats: {
+    outboundBytes: number | null;
+    inboundBytes: number | null;
+    remoteFramesDecoded: number | null;
+    timestampMs: number | null;
+  };
+}
+
+function parseIceServers(): RTCIceServer[] {
+  const raw = import.meta.env.VITE_ICE_SERVERS;
+  if (!raw) {
+    return [{ urls: ["stun:stun.l.google.com:19302"] }];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed as RTCIceServer[];
+    }
+  } catch {
+    // ignore invalid env and use fallback
+  }
+  return [{ urls: ["stun:stun.l.google.com:19302"] }];
 }
 
 const rtcConfig: RTCConfiguration = {
-  iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+  iceServers: parseIceServers(),
 };
 
 function closeDetail(code?: number, reason?: string): string {
@@ -53,6 +89,26 @@ export const useVideoStore = defineStore("video", {
     playOutgoingRing: false,
     playIncomingRing: false,
     isDialing: false,
+    diagnosticsEnabled: false,
+    diagnostics: {
+      localFps: null,
+      remoteFps: null,
+      localResolution: null,
+      remoteResolution: null,
+      outboundKbps: null,
+      inboundKbps: null,
+      packetLossPct: null,
+      rttMs: null,
+      updatedAt: null,
+    },
+    diagnosticsError: "",
+    diagnosticsTimer: null,
+    previousStats: {
+      outboundBytes: null,
+      inboundBytes: null,
+      remoteFramesDecoded: null,
+      timestampMs: null,
+    },
   }),
   getters: {
     inCall(state): boolean {
@@ -60,6 +116,135 @@ export const useVideoStore = defineStore("video", {
     },
   },
   actions: {
+    setDiagnosticsEnabled(enabled: boolean) {
+      this.diagnosticsEnabled = enabled;
+      if (!enabled) {
+        this.stopDiagnosticsLoop();
+        return;
+      }
+      if (this.peer) {
+        this.startDiagnosticsLoop();
+      }
+    },
+
+    startDiagnosticsLoop() {
+      if (!this.diagnosticsEnabled || !this.peer) return;
+      if (this.diagnosticsTimer !== null) return;
+      void this.collectDiagnostics();
+      this.diagnosticsTimer = window.setInterval(() => {
+        void this.collectDiagnostics();
+      }, 1000);
+    },
+
+    stopDiagnosticsLoop() {
+      if (this.diagnosticsTimer !== null) {
+        window.clearInterval(this.diagnosticsTimer);
+        this.diagnosticsTimer = null;
+      }
+      this.previousStats = {
+        outboundBytes: null,
+        inboundBytes: null,
+        remoteFramesDecoded: null,
+        timestampMs: null,
+      };
+    },
+
+    async collectDiagnostics() {
+      if (!this.peer) return;
+      try {
+        const stats = await this.peer.getStats();
+        let localFps: number | null = null;
+        let remoteFps: number | null = null;
+        let localResolution: string | null = null;
+        let remoteResolution: string | null = null;
+        let outboundBytes: number | null = null;
+        let inboundBytes: number | null = null;
+        let packetsLost = 0;
+        let packetsTotal = 0;
+        let rttMs: number | null = null;
+
+        for (const report of stats.values()) {
+          if (report.type === "outbound-rtp" && report.kind === "video") {
+            const r = report as RTCOutboundRtpStreamStats;
+            outboundBytes = typeof r.bytesSent === "number" ? r.bytesSent : outboundBytes;
+          }
+          if (report.type === "inbound-rtp" && report.kind === "video") {
+            const r = report as RTCInboundRtpStreamStats;
+            inboundBytes = typeof r.bytesReceived === "number" ? r.bytesReceived : inboundBytes;
+            if (typeof r.framesPerSecond === "number") {
+              remoteFps = r.framesPerSecond;
+            }
+            packetsLost += typeof r.packetsLost === "number" ? r.packetsLost : 0;
+            packetsTotal += typeof r.packetsReceived === "number" ? r.packetsReceived : 0;
+          }
+          if (report.type === "candidate-pair") {
+            const r = report as RTCIceCandidatePairStats;
+            if (r.state === "succeeded" && typeof r.currentRoundTripTime === "number") {
+              rttMs = r.currentRoundTripTime * 1000;
+            }
+          }
+        }
+
+        const localTrack = this.localStream?.getVideoTracks()[0];
+        if (localTrack) {
+          const settings = localTrack.getSettings();
+          localFps = typeof settings.frameRate === "number" ? settings.frameRate : null;
+          if (settings.width && settings.height) {
+            localResolution = `${settings.width}x${settings.height}`;
+          }
+        }
+
+        const remoteTrack = this.remoteStream?.getVideoTracks()[0];
+        if (remoteTrack) {
+          const settings = remoteTrack.getSettings();
+          if (settings.width && settings.height) {
+            remoteResolution = `${settings.width}x${settings.height}`;
+          }
+        }
+
+        const now = Date.now();
+        const prevTs = this.previousStats.timestampMs;
+        let outboundKbps: number | null = null;
+        let inboundKbps: number | null = null;
+
+        if (prevTs && outboundBytes !== null && this.previousStats.outboundBytes !== null) {
+          const seconds = (now - prevTs) / 1000;
+          if (seconds > 0) {
+            outboundKbps = ((outboundBytes - this.previousStats.outboundBytes) * 8) / 1000 / seconds;
+          }
+        }
+        if (prevTs && inboundBytes !== null && this.previousStats.inboundBytes !== null) {
+          const seconds = (now - prevTs) / 1000;
+          if (seconds > 0) {
+            inboundKbps = ((inboundBytes - this.previousStats.inboundBytes) * 8) / 1000 / seconds;
+          }
+        }
+
+        const packetLossPct = packetsTotal > 0 ? (packetsLost / (packetsTotal + packetsLost)) * 100 : null;
+
+        this.diagnostics = {
+          localFps,
+          remoteFps,
+          localResolution,
+          remoteResolution,
+          outboundKbps,
+          inboundKbps,
+          packetLossPct,
+          rttMs,
+          updatedAt: now,
+        };
+        this.diagnosticsError = "";
+        this.previousStats = {
+          outboundBytes,
+          inboundBytes,
+          remoteFramesDecoded: this.previousStats.remoteFramesDecoded,
+          timestampMs: now,
+        };
+      } catch (error) {
+        this.diagnosticsError = error instanceof Error ? error.message : "Diagnostics failed";
+      }
+    },
+
     async listenForIncoming(conversationId: number) {
       const auth = useAuthStore();
       if (!auth.accessToken) return;
@@ -410,6 +595,7 @@ export const useVideoStore = defineStore("video", {
           this.playOutgoingRing = false;
           this.playIncomingRing = false;
           this.hasIncomingCallIntent = false;
+          this.startDiagnosticsLoop();
         } else if (["failed", "closed", "disconnected"].includes(peer.connectionState)) {
           this.status = "ended";
           this.statusMessage = "Call ended";
@@ -417,6 +603,7 @@ export const useVideoStore = defineStore("video", {
           this.playOutgoingRing = false;
           this.playIncomingRing = false;
           this.hasIncomingCallIntent = false;
+          this.stopDiagnosticsLoop();
         } else {
           this.statusMessage = `Connection: ${peer.connectionState}`;
         }
@@ -569,6 +756,7 @@ export const useVideoStore = defineStore("video", {
       this.isDialing = false;
       this.status = "ended";
       this.statusMessage = "Call ended";
+      this.stopDiagnosticsLoop();
     },
 
     resetStatusIfIdle() {

@@ -53,6 +53,22 @@ const showStartCall = computed(() => Boolean(activeConversation.value) && !video
 const showJoinCall = computed(() => Boolean(activeConversation.value) && !video.inCall && video.hasIncomingCallIntent);
 const showEndCall = computed(() => video.inCall || video.status === "testing" || video.status === "active");
 
+const formattedVideoDiagnostics = computed(() => {
+  const d = video.diagnostics;
+  const fmt = (value: number | null, digits = 1) => (value === null ? "—" : value.toFixed(digits));
+  return {
+    localFps: fmt(d.localFps),
+    remoteFps: fmt(d.remoteFps),
+    localResolution: d.localResolution ?? "—",
+    remoteResolution: d.remoteResolution ?? "—",
+    outboundKbps: fmt(d.outboundKbps),
+    inboundKbps: fmt(d.inboundKbps),
+    packetLossPct: fmt(d.packetLossPct, 2),
+    rttMs: fmt(d.rttMs),
+    updatedAt: d.updatedAt ? new Date(d.updatedAt).toLocaleTimeString() : "—",
+  };
+});
+
 function bindActivityListeners() {
   const touch = () => security.touch();
   window.addEventListener("mousemove", touch);
@@ -349,6 +365,11 @@ async function runLoopbackVideoTest() {
 async function runSignalingTest() {
   if (!chat.activeConversationId) return;
   await video.runSignalingTest(chat.activeConversationId);
+}
+
+function toggleVideoDiagnostics(event: Event) {
+  const input = event.target as HTMLInputElement;
+  video.setDiagnosticsEnabled(input.checked);
 }
 
 async function startVideoCall() {
@@ -839,7 +860,17 @@ onUnmounted(() => {
         <section class="video-panel" v-if="activeConversation">
           <div class="video-head">
             <strong>Video Stream</strong>
-            <span class="muted">{{ video.statusMessage }}</span>
+            <div class="video-head-right">
+              <span class="muted">{{ video.statusMessage }}</span>
+              <label class="video-diagnostics-toggle">
+                <input
+                  type="checkbox"
+                  :checked="video.diagnosticsEnabled"
+                  @change="toggleVideoDiagnostics"
+                />
+                Diagnostics
+              </label>
+            </div>
           </div>
           <div class="video-grid">
             <div class="video-frame">
@@ -857,6 +888,18 @@ onUnmounted(() => {
             <button v-if="video.localStream" class="ghost" @click="toggleMic">{{ video.micEnabled ? "Mute" : "Unmute" }}</button>
             <button v-if="video.localStream" class="ghost" @click="toggleCamera">{{ video.cameraEnabled ? "Camera Off" : "Camera On" }}</button>
             <button v-if="showEndCall" class="danger" @click="endVideoCall">End</button>
+          </div>
+          <div v-if="video.diagnosticsEnabled" class="video-diagnostics-panel">
+            <div>Local FPS: {{ formattedVideoDiagnostics.localFps }}</div>
+            <div>Remote FPS: {{ formattedVideoDiagnostics.remoteFps }}</div>
+            <div>Local resolution: {{ formattedVideoDiagnostics.localResolution }}</div>
+            <div>Remote resolution: {{ formattedVideoDiagnostics.remoteResolution }}</div>
+            <div>Outbound bitrate (kbps): {{ formattedVideoDiagnostics.outboundKbps }}</div>
+            <div>Inbound bitrate (kbps): {{ formattedVideoDiagnostics.inboundKbps }}</div>
+            <div>Packet loss (%): {{ formattedVideoDiagnostics.packetLossPct }}</div>
+            <div>RTT (ms): {{ formattedVideoDiagnostics.rttMs }}</div>
+            <div>Updated: {{ formattedVideoDiagnostics.updatedAt }}</div>
+            <div v-if="video.diagnosticsError" class="error">{{ video.diagnosticsError }}</div>
           </div>
           <details class="video-debug">
             <summary>Debug tools</summary>

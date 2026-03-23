@@ -90,12 +90,18 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = os.getenv("DJANGO_MEDIA_URL", "/media/")
+MEDIA_ROOT = Path(os.getenv("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "0") == "1"
+_cors_allowed_origins = [origin.strip() for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+if DEBUG and not CORS_ALLOW_ALL_ORIGINS and not _cors_allowed_origins:
+    # Keep local development simple unless explicitly overridden.
+    CORS_ALLOW_ALL_ORIGINS = True
+elif not CORS_ALLOW_ALL_ORIGINS:
+    CORS_ALLOWED_ORIGINS = _cors_allowed_origins
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
