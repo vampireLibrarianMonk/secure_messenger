@@ -1,11 +1,36 @@
-# Kubernetes Operations (Helm)
+# Kubernetes Operations (Helm) — Day 2 Operations
 
-This document covers day-2 operations for deploying and managing Secure Messenger on k3s with Helm.
+This document is the **Day 2 operations guide** for deploying and managing Secure Messenger on k3s with Helm.
+
+## Day 1 vs Day 2 terminology
+
+- **Day 1 operations**: first-time provisioning/bootstrap work to get a fresh environment ready (cluster install, base dependencies, initial deploy readiness).
+- **Day 2 operations**: ongoing lifecycle work after bootstrap (upgrades, scaling, troubleshooting, config changes, routine ops).
 
 - Initial cluster setup: see [`README-SETUP.md`](./README-SETUP.md)
 - Charts:
   - `./backend`
   - `./frontend`
+
+## Scope of this file
+
+- **Use this file for ongoing operations** after first-time cluster bootstrap.
+- **Do not use this file as the first-time setup guide**; use [`README-SETUP.md`](./README-SETUP.md) for that.
+
+## After reboot quick check (Day 2)
+
+If you reboot your machine, quickly verify k3s is running before normal operations:
+
+```bash
+sudo systemctl status k3s --no-pager
+kubectl get nodes
+```
+
+If k3s is not running:
+
+```bash
+sudo systemctl start k3s
+```
 
 ---
 
@@ -27,9 +52,11 @@ export FRONTEND_RELEASE=sm-frontend
 
 ---
 
-## 2) Install backend chart
+## 2) Standard operations
 
-### 2.1 Minimal install (chart-managed secret)
+### 2.1 Install backend chart
+
+#### Minimal install (chart-managed secret)
 
 The backend chart supports:
 
@@ -67,7 +94,7 @@ helm upgrade --install "$BACKEND_RELEASE" ./kubernetes/backend \
   --set secretEnv.POSTGRES_PASSWORD="replace-with-db-password"
 ```
 
-### 2.2 Install using an existing Kubernetes secret
+#### Install using an existing Kubernetes secret
 
 Create secret once:
 
@@ -89,7 +116,7 @@ helm upgrade --install "$BACKEND_RELEASE" ./kubernetes/backend \
 
 ---
 
-## 3) Install frontend chart
+### 2.2 Install frontend chart
 
 ```bash
 helm upgrade --install "$FRONTEND_RELEASE" ./kubernetes/frontend \
@@ -100,7 +127,7 @@ helm upgrade --install "$FRONTEND_RELEASE" ./kubernetes/frontend \
 
 > Note: frontend Vite env vars are build-time (`VITE_*`) and are baked into the image during `docker build`.
 
-### 3.1 Build frontend image with production API/WS/ICE values
+#### Build frontend image with production API/WS/ICE values
 
 ```bash
 docker build -t secure-messenger-frontend:local ./frontend \
@@ -124,27 +151,7 @@ For restricted NAT environments, include TURN in `VITE_ICE_SERVERS`, e.g.:
 
 ---
 
-## 4) Ingress + TLS
-
-Enable ingress per chart:
-
-```bash
-helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host=api.secure-messenger.local \
-  --set ingress.tls[0].hosts[0]=api.secure-messenger.local \
-  --set ingress.tls[0].secretName=api-secure-messenger-tls
-
-helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host=secure-messenger.local \
-  --set ingress.tls[0].hosts[0]=secure-messenger.local \
-  --set ingress.tls[0].secretName=secure-messenger-tls
-```
-
----
-
-## 5) Verify deployment health
+### 2.3 Verify deployment health
 
 ```bash
 helm list -n "$NS"
@@ -163,57 +170,7 @@ kubectl -n "$NS" logs deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend -f
 
 ---
 
-## 6) Updating env vars and secrets
-
-### 6.1 Update regular (non-secret) env vars
-
-Example: turn on Redis and point to a different host.
-
-```bash
-helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
-  -n "$NS" \
-  --reuse-values \
-  --set env.USE_REDIS="1" \
-  --set env.REDIS_URL="redis://redis-master:6379/0"
-```
-
-### 6.2 Update chart-managed secret values
-
-```bash
-helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
-  -n "$NS" \
-  --reuse-values \
-  --set secretEnv.DJANGO_SECRET_KEY="new-strong-key" \
-  --set secretEnv.POSTGRES_PASSWORD="new-db-password"
-```
-
-### 6.3 Update externally managed secret values
-
-If `existingSecretName` is used, update secret directly and restart deployment:
-
-```bash
-kubectl -n "$NS" create secret generic sm-backend-env \
-  --from-literal=DJANGO_SECRET_KEY='new-strong-key' \
-  --from-literal=POSTGRES_PASSWORD='new-db-password' \
-  -o yaml --dry-run=client | kubectl apply -f -
-
-kubectl -n "$NS" rollout restart deploy/"$BACKEND_RELEASE"-secure-messenger-backend
-```
-
-### 6.4 Control migration job behavior
-
-The backend chart runs migrations as a Helm hook Job by default. Disable if needed:
-
-```bash
-helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
-  -n "$NS" \
-  --reuse-values \
-  --set migrationJob.enabled=false
-```
-
----
-
-## 7) Port forwarding for local access
+### 2.4 Port forwarding for local access
 
 Frontend:
 
@@ -234,7 +191,7 @@ Then open:
 
 ---
 
-## 8) Upgrade charts and images
+### 2.5 Upgrade charts and images
 
 Rebuild/reimport images (from repo root):
 
@@ -258,7 +215,7 @@ helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values
 
 ---
 
-## 9) Uninstall
+### 2.6 Uninstall
 
 Remove releases:
 
@@ -272,3 +229,226 @@ Optional cleanup:
 ```bash
 kubectl delete namespace "$NS"
 ```
+
+---
+
+## 3) Cleanup (Optional)
+
+Use this section to clean temporary local artifacts after image build/import work.
+
+Remove exported image tar files:
+
+```bash
+rm -f /tmp/secure-messenger-backend-local.tar
+rm -f /tmp/secure-messenger-frontend-local.tar
+```
+
+If you also want to remove deployed cluster resources, use **2.6 Uninstall** above.
+
+---
+
+## 4) Advanced operations
+
+### 4.1 Ingress + TLS
+
+Enable ingress per chart:
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=api.secure-messenger.local \
+  --set ingress.tls[0].hosts[0]=api.secure-messenger.local \
+  --set ingress.tls[0].secretName=api-secure-messenger-tls
+
+helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=secure-messenger.local \
+  --set ingress.tls[0].hosts[0]=secure-messenger.local \
+  --set ingress.tls[0].secretName=secure-messenger-tls
+```
+
+---
+
+### 4.2 Updating env vars and secrets
+
+#### Update regular (non-secret) env vars
+
+Example: turn on Redis and point to a different host.
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
+  -n "$NS" \
+  --reuse-values \
+  --set env.USE_REDIS="1" \
+  --set env.REDIS_URL="redis://redis-master:6379/0"
+```
+
+#### Update chart-managed secret values
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
+  -n "$NS" \
+  --reuse-values \
+  --set secretEnv.DJANGO_SECRET_KEY="new-strong-key" \
+  --set secretEnv.POSTGRES_PASSWORD="new-db-password"
+```
+
+#### Update externally managed secret values
+
+If `existingSecretName` is used, update secret directly and restart deployment:
+
+```bash
+kubectl -n "$NS" create secret generic sm-backend-env \
+  --from-literal=DJANGO_SECRET_KEY='new-strong-key' \
+  --from-literal=POSTGRES_PASSWORD='new-db-password' \
+  -o yaml --dry-run=client | kubectl apply -f -
+
+kubectl -n "$NS" rollout restart deploy/"$BACKEND_RELEASE"-secure-messenger-backend
+```
+
+#### Control migration job behavior
+
+The backend chart runs migrations as a Helm hook Job by default. Disable if needed:
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
+  -n "$NS" \
+  --reuse-values \
+  --set migrationJob.enabled=false
+```
+
+---
+
+## 5) Next steps: access from another LAN computer (example: `10.0.0.77` -> `10.0.0.43`)
+
+Use this when k3s is running on server `10.0.0.43` and another computer on the same network (`10.0.0.77`) needs to open the app.
+
+### 5.1 Important for video calls
+
+For browser camera/mic + WebRTC reliability across computers, use **HTTPS/WSS** (secure context). HTTP may work for basic API tests but commonly fails for media permissions on non-localhost origins.
+
+### 5.2 Recommended LAN setup (Ingress + hostnames)
+
+1) Pick LAN hostnames (example):
+
+- Frontend: `secure-messenger.lan`
+- Backend API/WS: `api.secure-messenger.lan`
+
+2) Build frontend image with those public URLs:
+
+```bash
+docker build -t secure-messenger-frontend:local ./frontend \
+  --build-arg VITE_API_BASE=https://api.secure-messenger.lan/api \
+  --build-arg VITE_WS_BASE=wss://api.secure-messenger.lan \
+  --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]'
+
+docker save secure-messenger-frontend:local -o /tmp/secure-messenger-frontend-local.tar
+sudo k3s ctr images import /tmp/secure-messenger-frontend-local.tar
+helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values
+kubectl -n "$NS" rollout restart deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend
+kubectl -n "$NS" rollout status deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend --timeout=180s
+```
+
+3) Ensure backend allows those hosts/origins:
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
+  -n "$NS" \
+  --reuse-values \
+  --set env.DJANGO_ALLOWED_HOSTS="api.secure-messenger.lan,10.0.0.43" \
+  --set env.CORS_ALLOWED_ORIGINS="https://secure-messenger.lan"
+```
+
+4) Enable ingress for both charts:
+
+```bash
+helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=api.secure-messenger.lan \
+  --set ingress.hosts[0].paths[0].path=/api \
+  --set ingress.hosts[0].paths[1].path=/ws
+
+helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=secure-messenger.lan
+```
+
+5) On client computer (`10.0.0.77`), map hostnames to server IP (`10.0.0.43`) in hosts file:
+
+```text
+10.0.0.43 secure-messenger.lan
+10.0.0.43 api.secure-messenger.lan
+```
+
+6) Open from client browser:
+
+```text
+https://secure-messenger.lan
+```
+
+### 5.3 TLS note for LAN
+
+For real browser media tests between computers, configure TLS certs trusted by both machines (self-signed trust chain, internal CA, or other cert strategy) and set ingress TLS values as in **4.1 Ingress + TLS**.
+
+### 5.4 Firewall/network checks
+
+- Ensure client can reach server `10.0.0.43` on ingress ports (typically `80/443`).
+- Ensure no host firewall blocks those ports.
+- If calls connect but no media flows, add TURN to `VITE_ICE_SERVERS` (see section **2.2**).
+
+### 5.5 Quick LAN smoke test checklist
+
+Run these in order after applying section **5.2**.
+
+1) **Server (`10.0.0.43`): verify ingress + app resources are up**
+
+```bash
+kubectl -n "$NS" get deploy,svc,ingress
+kubectl -n "$NS" rollout status deploy/"$BACKEND_RELEASE"-secure-messenger-backend --timeout=180s
+kubectl -n "$NS" rollout status deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend --timeout=180s
+```
+
+Expected: deployments `successfully rolled out`, ingress hosts present.
+
+2) **Client (`10.0.0.77`): verify name resolution to server IP**
+
+```bash
+getent hosts secure-messenger.lan api.secure-messenger.lan
+```
+
+Expected: both resolve to `10.0.0.43`.
+
+3) **Client (`10.0.0.77`): verify backend API is reachable**
+
+```bash
+curl -k -I https://api.secure-messenger.lan/api/
+```
+
+Expected: HTTP response (401 is acceptable without auth; it proves reachability).
+
+4) **Client (`10.0.0.77`): open frontend**
+
+Open:
+
+```text
+https://secure-messenger.lan
+```
+
+Expected: app loads without network errors in browser console.
+
+5) **Cross-computer functional test**
+
+- Login as user A on one machine and user B on the other.
+- Create/open DM between those users.
+- Send text both directions.
+- Start/Join call and verify both local + remote media render.
+
+Expected: DM messages deliver both directions; call transitions to connected/active.
+
+6) **If DM works but media fails**
+
+- Confirm browser has camera/mic permissions on both machines.
+- Confirm secure context (`https://...`) is used, not `http://`.
+- Add TURN entries to `VITE_ICE_SERVERS`, rebuild frontend image, redeploy (section **2.2** + **5.2**).
+
+

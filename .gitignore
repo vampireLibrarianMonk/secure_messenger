@@ -15,3 +15,6 @@ frontend/dist/
 
 # Media
 frontend/media/attachments
+
+# Summarizer
+git_summary.py

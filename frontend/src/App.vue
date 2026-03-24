@@ -40,6 +40,12 @@ const localVideoEl = ref<HTMLVideoElement | null>(null);
 const remoteVideoEl = ref<HTMLVideoElement | null>(null);
 const fileInputEl = ref<HTMLInputElement | null>(null);
 
+function nextMessageIndex(): number {
+  // Backend currently validates against 32-bit signed max (2147483647),
+  // so use unix seconds (safe through year 2038) instead of Date.now() ms.
+  return Math.floor(Date.now() / 1000);
+}
+
 const activeMessageIds = new Set<number>();
 let knownConversationIds = new Set<number>();
 let knownMessageIds = new Set<number>();
@@ -447,7 +453,7 @@ async function sendMessage() {
         ciphertext: encrypted.ciphertext,
         nonce: encrypted.nonce,
         aad: JSON.stringify({ kind: "text", shared_key: key }),
-        message_index: Date.now(),
+        message_index: nextMessageIndex(),
       },
     });
     await refreshCurrentConversationMessages();
@@ -478,7 +484,7 @@ async function sendEncryptedFile(event: Event) {
         ciphertext: marker.ciphertext,
         nonce: marker.nonce,
         aad: JSON.stringify({ kind: "attachment", shared_key: key }),
-        message_index: Date.now(),
+        message_index: nextMessageIndex(),
       },
     });
 
