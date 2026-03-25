@@ -323,6 +323,8 @@ helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
 
 Use this when k3s is running on server `10.0.0.43` and another computer on the same network (`10.0.0.77`) needs to open the app.
 
+> **Important for this cluster:** if `ingress-nginx-controller` shows `EXTERNAL-IP <pending>` and only NodePorts are available, use port `:31121` for HTTPS access (and `:31834` for HTTP). Examples below use `:31121`.
+
 ### 5.1 Important for video calls
 
 For browser camera/mic + WebRTC reliability across computers, use **HTTPS/WSS** (secure context). HTTP may work for basic API tests but commonly fails for media permissions on non-localhost origins.
@@ -334,12 +336,27 @@ For browser camera/mic + WebRTC reliability across computers, use **HTTPS/WSS** 
 - Frontend: `secure-messenger.lan`
 - Backend API/WS: `api.secure-messenger.lan`
 
-2) Build frontend image with those public URLs:
+2) Create a self-signed TLS cert secret (quick LAN testing):
+
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /tmp/secure-messenger-lan.key \
+  -out /tmp/secure-messenger-lan.crt \
+  -subj "/CN=secure-messenger.lan" \
+  -addext "subjectAltName=DNS:secure-messenger.lan,DNS:api.secure-messenger.lan"
+
+kubectl -n "$NS" create secret tls secure-messenger-lan-tls \
+  --cert=/tmp/secure-messenger-lan.crt \
+  --key=/tmp/secure-messenger-lan.key \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+3) Build frontend image with those public URLs:
 
 ```bash
 docker build -t secure-messenger-frontend:local ./frontend \
-  --build-arg VITE_API_BASE=https://api.secure-messenger.lan/api \
-  --build-arg VITE_WS_BASE=wss://api.secure-messenger.lan \
+  --build-arg VITE_API_BASE=https://api.secure-messenger.lan:31121/api \
+  --build-arg VITE_WS_BASE=wss://api.secure-messenger.lan:31121 \
   --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]'
 
 docker save secure-messenger-frontend:local -o /tmp/secure-messenger-frontend-local.tar
@@ -349,42 +366,80 @@ kubectl -n "$NS" rollout restart deploy/"$FRONTEND_RELEASE"-secure-messenger-fro
 kubectl -n "$NS" rollout status deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend --timeout=180s
 ```
 
-3) Ensure backend allows those hosts/origins:
+4) Ensure backend allows those hosts/origins:
+
+> Use `--set-string` and escape commas in `DJANGO_ALLOWED_HOSTS` to avoid Helm parse errors.
 
 ```bash
 helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
   -n "$NS" \
   --reuse-values \
-  --set env.DJANGO_ALLOWED_HOSTS="api.secure-messenger.lan,10.0.0.43" \
-  --set env.CORS_ALLOWED_ORIGINS="https://secure-messenger.lan"
+  --set-string env.DJANGO_ALLOWED_HOSTS=api.secure-messenger.lan\,10.0.0.43\,127.0.0.1 \
+  --set-string env.CORS_ALLOWED_ORIGINS=https://secure-messenger.lan:31121
 ```
 
-4) Enable ingress for both charts:
+5) Enable ingress for both charts:
+
+> Include explicit `pathType` (and frontend `/` path) so ingress manifests stay valid.
 
 ```bash
 helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
+  --set ingress.className=nginx \
   --set ingress.hosts[0].host=api.secure-messenger.lan \
   --set ingress.hosts[0].paths[0].path=/api \
-  --set ingress.hosts[0].paths[1].path=/ws
+  --set ingress.hosts[0].paths[0].pathType=Prefix \
+  --set ingress.hosts[0].paths[1].path=/ws \
+  --set ingress.hosts[0].paths[1].pathType=Prefix \
+  --set ingress.tls[0].hosts[0]=api.secure-messenger.lan \
+  --set ingress.tls[0].secretName=secure-messenger-lan-tls
 
 helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
-  --set ingress.hosts[0].host=secure-messenger.lan
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=secure-messenger.lan \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix \
+  --set ingress.tls[0].hosts[0]=secure-messenger.lan \
+  --set ingress.tls[0].secretName=secure-messenger-lan-tls
 ```
 
-5) On client computer (`10.0.0.77`), map hostnames to server IP (`10.0.0.43`) in hosts file:
+6) On **both** server (`10.0.0.43`) and client (`10.0.0.77`), map hostnames in hosts file:
 
 ```text
 10.0.0.43 secure-messenger.lan
 10.0.0.43 api.secure-messenger.lan
 ```
 
-6) Open from client browser:
+Quick append command (Linux/macOS):
+
+```bash
+echo '10.0.0.43 secure-messenger.lan api.secure-messenger.lan' | sudo tee -a /etc/hosts
+```
+
+Windows (run Command Prompt as Administrator):
+
+```cmd
+echo 10.0.0.43 secure-messenger.lan api.secure-messenger.lan>>C:\Windows\System32\drivers\etc\hosts
+```
+
+Verify:
+
+```bash
+getent hosts secure-messenger.lan api.secure-messenger.lan
+```
+
+7) Verify ingress exists and then open from browser:
+
+```bash
+kubectl -n "$NS" get ingress
+```
 
 ```text
-https://secure-messenger.lan
+https://secure-messenger.lan:31121
 ```
+
+If your ingress is later exposed directly on 443, you can switch to `https://secure-messenger.lan` and remove the explicit port.
 
 ### 5.3 TLS note for LAN
 
@@ -421,7 +476,7 @@ Expected: both resolve to `10.0.0.43`.
 3) **Client (`10.0.0.77`): verify backend API is reachable**
 
 ```bash
-curl -k -I https://api.secure-messenger.lan/api/
+curl -k -I https://api.secure-messenger.lan:31121/api/
 ```
 
 Expected: HTTP response (401 is acceptable without auth; it proves reachability).
@@ -431,7 +486,7 @@ Expected: HTTP response (401 is acceptable without auth; it proves reachability)
 Open:
 
 ```text
-https://secure-messenger.lan
+https://secure-messenger.lan:31121
 ```
 
 Expected: app loads without network errors in browser console.
@@ -450,5 +505,12 @@ Expected: DM messages deliver both directions; call transitions to connected/act
 - Confirm browser has camera/mic permissions on both machines.
 - Confirm secure context (`https://...`) is used, not `http://`.
 - Add TURN entries to `VITE_ICE_SERVERS`, rebuild frontend image, redeploy (section **2.2** + **5.2**).
+
+### 5.6 Lessons learned / common pitfalls
+
+- If you see `Could not resolve host`, add `/etc/hosts` entries on the machine you are testing from (server and client).
+- If Helm says `key "43" has no value`, your comma-separated `DJANGO_ALLOWED_HOSTS` was not escaped; use `--set-string ...\, ...\, ...`.
+- If Helm says ingress `spec.rules[0].http.paths: Required value`, explicitly set frontend path `/` and `pathType=Prefix`.
+- If release names look like `-secure-messenger-frontend`, your shell vars were empty; either export `NS/BACKEND_RELEASE/FRONTEND_RELEASE` first or use explicit names (`sm-backend`, `sm-frontend`).
 
 
