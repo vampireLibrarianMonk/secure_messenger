@@ -429,6 +429,20 @@ Verify:
 getent hosts secure-messenger.lan api.secure-messenger.lan
 ```
 
+After hosts changes, flush DNS cache:
+
+- Linux (systemd-resolved):
+
+```bash
+sudo resolvectl flush-caches
+```
+
+- Windows (Administrator CMD):
+
+```cmd
+ipconfig /flushdns
+```
+
 7) Verify ingress exists and then open from browser:
 
 ```bash
