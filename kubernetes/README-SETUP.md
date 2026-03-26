@@ -210,3 +210,9 @@ rm -f /tmp/secure-messenger-frontend-local.tar
 If you also want to remove deployed app resources, use the **cleanup/uninstall** sections in [`README.md`](./README.md).
 
 When these checks pass, continue with [`README.md`](./README.md) for Day 2 operations.
+
+For day-to-day cluster/app health verification after setup, see in `README.md`:
+
+- **After reboot quick check (Day 2)**
+- **Quick app health check (explicit commands)**
+- **2.3 Verify deployment health**

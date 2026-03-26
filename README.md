@@ -84,6 +84,32 @@ Open: `http://127.0.0.1:5175`
 - `USE_POSTGRES=1` enables PostgreSQL settings (backend)
 - `USE_REDIS=1` enables Redis channel layer (backend)
 
+## Docker backend startup with admin bootstrap (Stage 1)
+
+The backend image now supports first-admin provisioning at container startup via `backend/docker-entrypoint.sh`:
+
+1. Runs DB migrations
+2. Optionally runs `python manage.py bootstrap_admin`
+3. Starts Daphne ASGI server
+
+Required environment variables for secure bootstrap:
+
+- `BOOTSTRAP_ADMIN_ENABLED=1`
+- `BOOTSTRAP_ADMIN_USERNAME=<admin username>`
+- `BOOTSTRAP_ADMIN_EMAIL=<admin email>`
+- `BOOTSTRAP_ADMIN_PASSWORD=<strong secret from secret manager>`
+- optional: `BOOTSTRAP_ADMIN_GROUP=security_admin`
+
+Verification endpoint (JWT required, security admin only):
+
+- `GET /api/admin/security/status/`
+
+Notes:
+
+- Never hardcode bootstrap credentials in source control.
+- Keep bootstrap enabled only for initial provisioning flow.
+- The bootstrap command is idempotent (safe across restarts; no duplicate user expected).
+
 ## Security Note
 
 This project is a practical secure-messaging prototype. Do not treat it as production-ready cryptographic software without independent security review and hardening.

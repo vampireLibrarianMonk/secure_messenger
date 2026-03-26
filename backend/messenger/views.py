@@ -1,3 +1,5 @@
+import os
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.contrib.auth.models import User
@@ -34,6 +36,7 @@ from .serializers import (
     WorkspaceMembershipSerializer,
     WorkspaceSerializer,
 )
+from .permissions import IsSecurityAdmin
 
 
 class RegisterView(APIView):
@@ -281,6 +284,21 @@ class PresenceView(APIView):
         return Response({"status": "ok"})
 
 
+class AdminSecurityBootstrapStatusView(APIView):
+    permission_classes = [IsSecurityAdmin]
+
+    def get(self, request):
+        required_group = os.getenv("SECURITY_ADMIN_GROUP", "security_admin").strip() or "security_admin"
+        return Response(
+            {
+                "admin_security_access": "ok",
+                "required_group": required_group,
+                "active_superusers": User.objects.filter(is_superuser=True, is_active=True).count(),
+                "bootstrap_enabled": os.getenv("BOOTSTRAP_ADMIN_ENABLED", "0") == "1",
+            }
+        )
+
+
 __all__ = [
     "RegisterView",
     "LogoutView",
@@ -295,4 +313,5 @@ __all__ = [
     "AttachmentViewSet",
     "SessionEventViewSet",
     "PresenceView",
+    "AdminSecurityBootstrapStatusView",
 ]

@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
 
 COPY . /app
 
+RUN chmod +x /app/docker-entrypoint.sh
+
 EXPOSE 8000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "-m", "daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]

@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .views import (
+    AdminSecurityBootstrapStatusView,
     AttachmentViewSet,
     ChannelViewSet,
     ConversationViewSet,
@@ -28,6 +29,7 @@ router.register(r"session-events", SessionEventViewSet, basename="session-event"
 
 
 urlpatterns = [
+    path("admin/security/status/", AdminSecurityBootstrapStatusView.as_view(), name="admin-security-status"),
     path("auth/register/", RegisterView.as_view(), name="register"),
     path("auth/login/", TokenObtainPairView.as_view(), name="login"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

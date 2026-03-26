@@ -32,6 +32,33 @@ If k3s is not running:
 sudo systemctl start k3s
 ```
 
+### Quick app health check (explicit commands)
+
+Use this block when you want a fast, copy/paste check that backend + frontend are running in k3s.
+
+```bash
+# Cluster health
+sudo systemctl status k3s --no-pager
+kubectl get nodes
+
+# Helm releases in app namespace
+helm list -n secure-messenger
+
+# App workloads/services/ingress
+kubectl -n secure-messenger get deploy,po,svc,ingress
+
+# Rollout health for backend/frontend
+kubectl -n secure-messenger rollout status deploy/sm-backend-secure-messenger-backend --timeout=180s
+kubectl -n secure-messenger rollout status deploy/sm-frontend-secure-messenger-frontend --timeout=180s
+```
+
+Optional live logs:
+
+```bash
+kubectl -n secure-messenger logs deploy/sm-backend-secure-messenger-backend -f
+kubectl -n secure-messenger logs deploy/sm-frontend-secure-messenger-frontend -f
+```
+
 ---
 
 ## 1) Namespace and release naming
@@ -188,6 +215,15 @@ Then open:
 
 - Frontend: `http://127.0.0.1:5175`
 - Backend API base: `http://127.0.0.1:8000/api`
+
+### 2.4.1 Access URL quick reference
+
+- **LAN ingress (current NodePort HTTPS setup):**
+  - Frontend: `https://secure-messenger.lan:31121`
+  - Backend API base: `https://api.secure-messenger.lan:31121/api`
+- **Local port-forward testing:**
+  - Frontend: `http://127.0.0.1:5175`
+  - Backend API base: `http://127.0.0.1:8000/api`
 
 ---
 
