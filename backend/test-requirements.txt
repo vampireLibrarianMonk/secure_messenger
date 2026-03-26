@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Test runner/runtime deps
+pytest>=8.0
+pytest-django>=4.8

@@ -20,6 +20,9 @@ from .models import (
     ConversationMember,
     Device,
     MessageEnvelope,
+    SecurityJourneyReport,
+    SecurityJourneyStage,
+    SecurityVerificationMatrixItem,
     SessionEvent,
     Workspace,
     WorkspaceMembership,
@@ -31,6 +34,9 @@ from .serializers import (
     ConversationSerializer,
     DeviceSerializer,
     MessageEnvelopeSerializer,
+    SecurityJourneyReportSerializer,
+    SecurityJourneyStageSerializer,
+    SecurityVerificationMatrixItemSerializer,
     SessionEventSerializer,
     UserRegistrationSerializer,
     WorkspaceMembershipSerializer,
@@ -284,6 +290,48 @@ class PresenceView(APIView):
         return Response({"status": "ok"})
 
 
+class SecurityJourneyReportViewSet(viewsets.ModelViewSet):
+    serializer_class = SecurityJourneyReportSerializer
+    permission_classes = [IsSecurityAdmin]
+
+    def get_queryset(self):
+        return (
+            SecurityJourneyReport.objects.select_related("created_by")
+            .prefetch_related("stages", "verification_items")
+            .order_by("-created_at")
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class SecurityJourneyStageViewSet(viewsets.ModelViewSet):
+    serializer_class = SecurityJourneyStageSerializer
+    permission_classes = [IsSecurityAdmin]
+
+    def get_queryset(self):
+        queryset = SecurityJourneyStage.objects.select_related("report").order_by("flow_type", "stage_number", "id")
+        report_id = self.request.query_params.get("report")
+        if report_id:
+            queryset = queryset.filter(report_id=report_id)
+        flow_type = self.request.query_params.get("flow_type")
+        if flow_type:
+            queryset = queryset.filter(flow_type=flow_type)
+        return queryset
+
+
+class SecurityVerificationMatrixItemViewSet(viewsets.ModelViewSet):
+    serializer_class = SecurityVerificationMatrixItemSerializer
+    permission_classes = [IsSecurityAdmin]
+
+    def get_queryset(self):
+        queryset = SecurityVerificationMatrixItem.objects.select_related("report", "stage").order_by("created_at")
+        report_id = self.request.query_params.get("report")
+        if report_id:
+            queryset = queryset.filter(report_id=report_id)
+        return queryset
+
+
 class AdminSecurityBootstrapStatusView(APIView):
     permission_classes = [IsSecurityAdmin]
 
@@ -312,6 +360,9 @@ __all__ = [
     "MessageEnvelopeViewSet",
     "AttachmentViewSet",
     "SessionEventViewSet",
+    "SecurityJourneyReportViewSet",
+    "SecurityJourneyStageViewSet",
+    "SecurityVerificationMatrixItemViewSet",
     "PresenceView",
     "AdminSecurityBootstrapStatusView",
 ]

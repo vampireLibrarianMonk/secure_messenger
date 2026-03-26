@@ -125,3 +125,89 @@ class SessionEvent(TimeStampedModel):
     device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="session_events")
     event_type = models.CharField(max_length=16, choices=EVENT_CHOICES)
     metadata = models.JSONField(default=dict, blank=True)
+
+
+class SecurityJourneyReport(TimeStampedModel):
+    FLOW_DM = "dm"
+    FLOW_VIDEO = "video"
+    FLOW_BOTH = "both"
+    FLOW_CHOICES = (
+        (FLOW_DM, "Direct Message"),
+        (FLOW_VIDEO, "Video"),
+        (FLOW_BOTH, "Both"),
+    )
+
+    STATUS_DRAFT = "draft"
+    STATUS_REVIEW = "review"
+    STATUS_FINAL = "final"
+    STATUS_CHOICES = (
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_REVIEW, "In Review"),
+        (STATUS_FINAL, "Final"),
+    )
+
+    title = models.CharField(max_length=255)
+    flow_type = models.CharField(max_length=16, choices=FLOW_CHOICES, default=FLOW_BOTH)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    executive_summary = models.TextField(blank=True)
+    reality_check_answers = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="security_journey_reports",
+    )
+
+
+class SecurityJourneyStage(TimeStampedModel):
+    FLOW_DM = "dm"
+    FLOW_VIDEO = "video"
+    FLOW_CHOICES = (
+        (FLOW_DM, "Direct Message"),
+        (FLOW_VIDEO, "Video"),
+    )
+
+    report = models.ForeignKey(SecurityJourneyReport, on_delete=models.CASCADE, related_name="stages")
+    flow_type = models.CharField(max_length=16, choices=FLOW_CHOICES)
+    stage_number = models.PositiveIntegerField()
+    stage_name = models.CharField(max_length=255)
+    component = models.CharField(max_length=255, blank=True)
+    protocol = models.CharField(max_length=128, blank=True)
+
+    security_assumptions = models.TextField(blank=True)
+    assets_exposed = models.TextField(blank=True)
+    trust_boundary = models.TextField(blank=True)
+    attack_surface = models.TextField(blank=True)
+
+    plaintext_data = models.TextField(blank=True)
+    encrypted_data = models.TextField(blank=True)
+    theoretically_readable_by = models.TextField(blank=True)
+
+    logs_should_exist = models.TextField(blank=True)
+    logs_must_not_contain = models.TextField(blank=True)
+    validation_method = models.TextField(blank=True)
+    likely_failure_modes = models.TextField(blank=True)
+    code_config_infra_checks = models.TextField(blank=True)
+
+    severity_if_compromised = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        unique_together = ("report", "flow_type", "stage_number", "stage_name")
+        ordering = ("flow_type", "stage_number", "id")
+
+
+class SecurityVerificationMatrixItem(TimeStampedModel):
+    report = models.ForeignKey(SecurityJourneyReport, on_delete=models.CASCADE, related_name="verification_items")
+    stage = models.ForeignKey(
+        SecurityJourneyStage,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="verification_items",
+    )
+    stage_label = models.CharField(max_length=255, blank=True)
+    expected_security_property = models.TextField()
+    evidence_source = models.TextField(blank=True)
+    how_to_test = models.TextField(blank=True)
+    pass_fail_criteria = models.TextField(blank=True)
+    common_misconfiguration = models.TextField(blank=True)
+    recommended_remediation = models.TextField(blank=True)

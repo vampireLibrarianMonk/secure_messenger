@@ -8,6 +8,9 @@ from .models import (
     ConversationMember,
     Device,
     MessageEnvelope,
+    SecurityJourneyReport,
+    SecurityJourneyStage,
+    SecurityVerificationMatrixItem,
     SessionEvent,
     Workspace,
     WorkspaceMembership,
@@ -125,3 +128,70 @@ class SessionEventSerializer(serializers.ModelSerializer):
         model = SessionEvent
         fields = ("id", "user", "device", "event_type", "metadata", "created_at")
         read_only_fields = ("user", "created_at")
+
+
+class SecurityJourneyReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityJourneyReport
+        fields = (
+            "id",
+            "title",
+            "flow_type",
+            "status",
+            "executive_summary",
+            "reality_check_answers",
+            "created_by",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_by", "created_at", "updated_at")
+
+
+class SecurityJourneyStageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityJourneyStage
+        fields = (
+            "id",
+            "report",
+            "flow_type",
+            "stage_number",
+            "stage_name",
+            "component",
+            "protocol",
+            "security_assumptions",
+            "assets_exposed",
+            "trust_boundary",
+            "attack_surface",
+            "plaintext_data",
+            "encrypted_data",
+            "theoretically_readable_by",
+            "logs_should_exist",
+            "logs_must_not_contain",
+            "validation_method",
+            "likely_failure_modes",
+            "code_config_infra_checks",
+            "severity_if_compromised",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityVerificationMatrixItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityVerificationMatrixItem
+        fields = (
+            "id",
+            "report",
+            "stage",
+            "stage_label",
+            "expected_security_property",
+            "evidence_source",
+            "how_to_test",
+            "pass_fail_criteria",
+            "common_misconfiguration",
+            "recommended_remediation",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")

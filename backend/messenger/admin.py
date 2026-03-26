@@ -7,6 +7,9 @@ from .models import (
     ConversationMember,
     Device,
     MessageEnvelope,
+    SecurityJourneyReport,
+    SecurityJourneyStage,
+    SecurityVerificationMatrixItem,
     SessionEvent,
     Workspace,
     WorkspaceMembership,
@@ -62,3 +65,23 @@ class AttachmentAdmin(admin.ModelAdmin):
 class SessionEventAdmin(admin.ModelAdmin):
     list_display = ("id", "user", "device", "event_type", "created_at")
     list_filter = ("event_type",)
+
+
+@admin.register(SecurityJourneyReport)
+class SecurityJourneyReportAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "flow_type", "status", "created_by", "created_at")
+    list_filter = ("flow_type", "status")
+    search_fields = ("title", "created_by__username")
+
+
+@admin.register(SecurityJourneyStage)
+class SecurityJourneyStageAdmin(admin.ModelAdmin):
+    list_display = ("id", "report", "flow_type", "stage_number", "stage_name", "severity_if_compromised", "created_at")
+    list_filter = ("flow_type", "severity_if_compromised")
+    search_fields = ("stage_name", "component", "protocol")
+
+
+@admin.register(SecurityVerificationMatrixItem)
+class SecurityVerificationMatrixItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "report", "stage", "stage_label", "created_at")
+    search_fields = ("stage_label", "expected_security_property")

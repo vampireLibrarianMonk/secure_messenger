@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Conversation, ConversationMember
+from .models import Conversation, ConversationMember, SecurityJourneyReport
 
 
 class AuthFlowTests(TestCase):
@@ -109,3 +109,74 @@ class AdminSecurityEndpointTests(TestCase):
         response = self.client.get("/api/admin/security/status/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["admin_security_access"], "ok")
+
+
+class Stage2SecurityJourneyApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(username="secadmin", email="sec@example.com", password="testpass123")
+        self.member = User.objects.create_user(username="member", password="testpass123")
+
+    def _auth(self, username: str, password: str):
+        token = self.client.post(
+            "/api/auth/login/", {"username": username, "password": password}, format="json"
+        ).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    def test_non_admin_cannot_access_security_journey_reports(self):
+        self._auth("member", "testpass123")
+        response = self.client.get("/api/admin/security/reports/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_create_report_stage_and_matrix_item(self):
+        self._auth("secadmin", "testpass123")
+
+        report_resp = self.client.post(
+            "/api/admin/security/reports/",
+            {
+                "title": "DM + Video exploratory review",
+                "flow_type": "both",
+                "status": "draft",
+                "executive_summary": "Initial draft.",
+                "reality_check_answers": {"is_e2ee": "unknown"},
+            },
+            format="json",
+        )
+        self.assertEqual(report_resp.status_code, 201)
+        report_id = report_resp.data["id"]
+
+        stage_resp = self.client.post(
+            "/api/admin/security/stages/",
+            {
+                "report": report_id,
+                "flow_type": "dm",
+                "stage_number": 1,
+                "stage_name": "User authenticated",
+                "component": "Auth API",
+                "protocol": "HTTPS",
+                "security_assumptions": "JWT validation and TLS are correctly configured.",
+                "severity_if_compromised": "high",
+            },
+            format="json",
+        )
+        self.assertEqual(stage_resp.status_code, 201)
+        stage_id = stage_resp.data["id"]
+
+        matrix_resp = self.client.post(
+            "/api/admin/security/verification-matrix/",
+            {
+                "report": report_id,
+                "stage": stage_id,
+                "stage_label": "DM-1",
+                "expected_security_property": "Only authenticated users can submit messages.",
+                "evidence_source": "Auth middleware logs",
+                "how_to_test": "Attempt unauthenticated POST /api/messages/",
+                "pass_fail_criteria": "Must return 401/403",
+                "common_misconfiguration": "AllowAny accidentally applied",
+                "recommended_remediation": "Restore IsAuthenticated and add regression tests",
+            },
+            format="json",
+        )
+        self.assertEqual(matrix_resp.status_code, 201)
+
+        self.assertTrue(SecurityJourneyReport.objects.filter(id=report_id, created_by=self.admin).exists())

@@ -13,6 +13,9 @@ from .views import (
     MessageEnvelopeViewSet,
     PresenceView,
     RegisterView,
+    SecurityJourneyReportViewSet,
+    SecurityJourneyStageViewSet,
+    SecurityVerificationMatrixItemViewSet,
     SessionEventViewSet,
     WorkspaceViewSet,
 )
@@ -26,6 +29,9 @@ router.register(r"conversations", ConversationViewSet, basename="conversation")
 router.register(r"messages", MessageEnvelopeViewSet, basename="message")
 router.register(r"attachments", AttachmentViewSet, basename="attachment")
 router.register(r"session-events", SessionEventViewSet, basename="session-event")
+router.register(r"admin/security/reports", SecurityJourneyReportViewSet, basename="security-journey-report")
+router.register(r"admin/security/stages", SecurityJourneyStageViewSet, basename="security-journey-stage")
+router.register(r"admin/security/verification-matrix", SecurityVerificationMatrixItemViewSet, basename="security-verification-matrix")
 
 
 urlpatterns = [
