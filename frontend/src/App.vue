@@ -44,9 +44,7 @@ const chat = useChatStore();
 const security = useSecurityStore();
 const video = useVideoStore();
 
-const authMode = ref<"login" | "register">("login");
 const username = ref("");
-const email = ref("");
 const password = ref("");
 const authError = ref("");
 
@@ -391,11 +389,7 @@ async function submitAuth() {
   authError.value = "";
   notificationsReady.value = false;
   try {
-    if (authMode.value === "login") {
-      await auth.login(username.value, password.value);
-    } else {
-      await auth.register(username.value, email.value, password.value);
-    }
+    await auth.login(username.value, password.value);
     await bootstrap();
   } catch (error) {
     authError.value = error instanceof Error ? error.message : "Authentication failed";
@@ -902,14 +896,13 @@ onUnmounted(() => {
     </header>
 
     <section v-if="!auth.isAuthenticated" class="card auth-screen">
-      <h2>{{ authMode === "login" ? "Sign in" : "Create account" }}</h2>
+      <h2>Sign in</h2>
       <input v-model="username" placeholder="Username" />
-      <input v-if="authMode === 'register'" v-model="email" placeholder="Email" />
       <input v-model="password" type="password" placeholder="Password" @keydown.enter="submitAuth" />
-      <button @click="submitAuth">{{ authMode === "login" ? "Login" : "Register" }}</button>
-      <button class="ghost" @click="authMode = authMode === 'login' ? 'register' : 'login'">
-        Switch to {{ authMode === "login" ? "register" : "login" }}
-      </button>
+      <button @click="submitAuth">Login</button>
+      <p class="muted">User registration is CLI-only for this deployment.</p>
+      <pre class="bash-log-scroll"><code>docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123!')"
+docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123!')"</code></pre>
       <p v-if="authError" class="error">{{ authError }}</p>
     </section>
 

@@ -8,7 +8,7 @@ Secure Messenger is a privacy-first messaging app with encrypted chat, encrypted
 
 ## Current Features
 
-- JWT auth (register/login/refresh/logout/me)
+- JWT auth (login/refresh/logout/me)
 - Conversation creation and membership management
 - Real-time chat via WebSockets
 - Client-side encrypted text messages
@@ -123,6 +123,15 @@ docker exec -it secure-messenger-backend python manage.py migrate
 
 # Run test suite
 docker exec -it secure-messenger-backend python manage.py test
+```
+
+### 5b) Create users via CLI (UI registration is disabled)
+
+Create users directly in the backend container:
+
+```bash
+docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123!')"
+docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123!')"
 ```
 
 HTTP URLs (default):
@@ -418,7 +427,7 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5175 --https
 
 ## Quick Validation Flow
 
-1. Register/login two users in separate browser profiles.
+1. Login two pre-provisioned users in separate browser profiles.
 2. Create/select a shared conversation.
 3. Send encrypted messages both ways.
 4. Upload a file from one side; verify receiver sees **Download ...** and can download.
