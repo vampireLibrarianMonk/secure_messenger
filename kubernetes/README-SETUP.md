@@ -26,6 +26,12 @@ sudo k3s kubectl get nodes
 
 You should see a node in `Ready` state.
 
+If `kubectl` is not installed system-wide, you can always use the bundled k3s client:
+
+```bash
+sudo k3s kubectl get nodes
+```
+
 ### Ensure k3s starts on boot/reboot
 
 k3s installs a systemd service (`k3s`) that should auto-start after reboot.
@@ -54,16 +60,16 @@ sudo systemctl status k3s --no-pager
 Use the k3s kubeconfig for your user shell:
 
 ```bash
-mkdir -p /home/$USER/.kube
-sudo cp /etc/rancher/k3s/k3s.yaml /home/$USER/.kube/config
-sudo chown $USER:$USER /home/$USER/.kube/config
-export KUBECONFIG=/home/$USER/.kube/config
+mkdir -p "$HOME/.kube"
+sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+sudo chown "$USER:$USER" "$HOME/.kube/config"
+export KUBECONFIG="$HOME/.kube/config"
 ```
 
 Optional (persist for future shells):
 
 ```bash
-echo 'export KUBECONFIG=/home/'"$USER"'/.kube/config' >> /home/$USER/.bashrc
+echo 'export KUBECONFIG="$HOME/.kube/config"' >> "$HOME/.bashrc"
 ```
 
 ## 3) Install Helm
@@ -76,7 +82,7 @@ helm version
 ## 4) Create namespace for this app
 
 ```bash
-kubectl create namespace secure-messenger
+kubectl create namespace secure-messenger 2>/dev/null || true
 ```
 
 ## 5) Install data-plane dependencies (Postgres + Redis)
@@ -143,14 +149,28 @@ sudo k3s ctr images import /tmp/secure-messenger-backend-local.tar
 sudo k3s ctr images import /tmp/secure-messenger-frontend-local.tar
 ```
 
-## 7) (Optional) Install nginx ingress controller
+## 7) Ingress controller choice on k3s
 
-Install this if you plan to use ingress hosts/TLS now:
+### Option A (recommended for k3s): use built-in Traefik
+
+k3s includes Traefik by default. Verify:
+
+```bash
+kubectl -n kube-system get deploy traefik
+```
+
+If Traefik exists and is `Available`, you can use ingress class `traefik` in chart installs/upgrades.
+
+### Option B: use ingress-nginx instead
+
+Use this only if you explicitly want nginx ingress behavior.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
 kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller
 ```
+
+If you choose ingress-nginx, use ingress class `nginx` in chart installs/upgrades.
 
 ## 8) Initial app install smoke test
 
@@ -167,6 +187,7 @@ helm upgrade --install sm-backend ./kubernetes/backend \
   --set migrationJob.enabled=false \
   --set image.repository=secure-messenger-backend \
   --set image.tag=local \
+  --set image.pullPolicy=IfNotPresent \
   --set env.POSTGRES_HOST=postgres-postgresql \
   --set env.POSTGRES_PORT=5432 \
   --set env.REDIS_URL=redis://redis-master:6379/0 \

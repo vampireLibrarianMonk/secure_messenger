@@ -556,46 +556,72 @@ onBeforeUnmount(() => {
             </select>
           </label>
 
-          <label>
-            Show animation details
-            <input v-model="showAnimationDetails" type="checkbox" />
-          </label>
+          <details class="advanced-controls">
+            <summary>Advanced simulation controls</summary>
+            <div class="advanced-controls-grid">
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Show animation details</span>
+                  <input v-model="showAnimationDetails" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Shows step-by-step progress so you can follow the simulation stage.</p>
+              </div>
 
-          <label>
-            Verbose bash log
-            <input v-model="verboseBashLog" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Verbose bash log</span>
+                  <input v-model="verboseBashLog" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Shows detailed line-by-line terminal-style run output.</p>
+              </div>
 
-          <label>
-            Inject warning conditions
-            <input v-model="injectWarningConditions" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Inject warning conditions</span>
+                  <input v-model="injectWarningConditions" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Adds a non-fatal warning to test warning-handling behavior.</p>
+              </div>
 
-          <label>
-            Include faux relay nodes
-            <input v-model="includeFauxRelayNodes" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Include faux relay nodes</span>
+                  <input v-model="includeFauxRelayNodes" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Simulates relay-path routing instead of direct peer path.</p>
+              </div>
 
-          <label>
-            Include unknown/unverified branch
-            <input v-model="includeUnknownBranch" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Include unknown/unverified branch</span>
+                  <input v-model="includeUnknownBranch" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Forces an unverified evidence branch for conservative classification tests.</p>
+              </div>
 
-          <label>
-            Inject failure branch
-            <input v-model="injectFailureBranch" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Inject failure branch</span>
+                  <input v-model="injectFailureBranch" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Forces a failure mid-run to validate failure handling and logs.</p>
+              </div>
 
-          <label>
-            Auto-scroll logs
-            <input v-model="autoScrollLogs" type="checkbox" />
-          </label>
+              <div class="advanced-option">
+                <label class="advanced-option-head">
+                  <span>Auto-scroll logs</span>
+                  <input v-model="autoScrollLogs" type="checkbox" />
+                </label>
+                <p class="advanced-option-note">Keeps logs pinned to the newest line while the run is active.</p>
+              </div>
+            </div>
+          </details>
         </div>
 
         <button class="run-sim-btn" @click="runSimulation">Run Simulated Test</button>
 
         <article class="test-lab-panel" style="margin-top: 0.8rem;">
-          <h4>Replay / Re-run (Stage 8)</h4>
+          <h4>Replay / Re-run</h4>
           <ul>
             <li v-for="run in runHistory" :key="run.run_id">
               <code>{{ run.run_id }}</code> — {{ run.scenario_label }} — {{ run.result }}
@@ -620,7 +646,7 @@ onBeforeUnmount(() => {
       <template v-else-if="activeView === 'connection-console'">
         <h3>Connection Console</h3>
         <p class="muted">
-          {{ selectedScenario?.label }} | {{ currentRunParticipants.join(" -> ") }} | {{ currentRunId || "sim_run_pending" }} |
+          {{ selectedScenario?.label }} | {{ currentRunParticipants.join(" -> ") }} | {{ currentRunId || "run_pending" }} |
           {{ runState }}
         </p>
 
@@ -673,7 +699,7 @@ onBeforeUnmount(() => {
         </article>
       </template>
       <template v-else-if="activeView === 'admin-review'">
-        <h3>Admin Review Workspace (Stage 6)</h3>
+        <h3>Admin Review Workspace</h3>
         <p class="muted">Review synthetic run artifacts and observability fields without plaintext content.</p>
 
         <article class="test-lab-panel">
@@ -709,7 +735,7 @@ onBeforeUnmount(() => {
         </article>
       </template>
       <template v-else>
-        <h3>Diagnostics (Stage 7)</h3>
+        <h3>Diagnostics</h3>
         <p v-if="!diagnosticsEnabled" class="muted">
           Diagnostics require test-user or security-admin role with verbose diagnostics enabled.
         </p>
@@ -803,3 +829,55 @@ onBeforeUnmount(() => {
     </p>
   </section>
 </template>
+
+<style scoped>
+.advanced-controls {
+  grid-column: 1 / -1;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  background: rgba(2, 6, 23, 0.45);
+  color: #e5e7eb;
+}
+
+.advanced-controls summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #dbeafe;
+}
+
+.advanced-controls-grid {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.advanced-option {
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.35rem 0.45rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.advanced-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.advanced-option-head input {
+  width: auto;
+  margin: 0;
+}
+
+.advanced-option-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: #9ca3af;
+  text-align: center;
+}
+</style>

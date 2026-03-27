@@ -32,6 +32,12 @@ If k3s is not running:
 sudo systemctl start k3s
 ```
 
+If `kubectl` is not installed globally, use:
+
+```bash
+sudo k3s kubectl get nodes
+```
+
 ---
 
 ## 1) Namespace and release naming
@@ -48,7 +54,10 @@ Export helpers:
 export NS=secure-messenger
 export BACKEND_RELEASE=sm-backend
 export FRONTEND_RELEASE=sm-frontend
+export INGRESS_CLASS=traefik
 ```
+
+> For ingress-nginx users, set `INGRESS_CLASS=nginx`.
 
 ---
 
@@ -168,6 +177,13 @@ kubectl -n "$NS" logs deploy/"$BACKEND_RELEASE"-secure-messenger-backend -f
 kubectl -n "$NS" logs deploy/"$FRONTEND_RELEASE"-secure-messenger-frontend -f
 ```
 
+If Helm is not installed yet:
+
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+```
+
 ---
 
 ### 2.4 Port forwarding for local access
@@ -256,12 +272,14 @@ Enable ingress per chart:
 ```bash
 helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
+  --set ingress.className="$INGRESS_CLASS" \
   --set ingress.hosts[0].host=api.secure-messenger.local \
   --set ingress.tls[0].hosts[0]=api.secure-messenger.local \
   --set ingress.tls[0].secretName=api-secure-messenger-tls
 
 helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
+  --set ingress.className="$INGRESS_CLASS" \
   --set ingress.hosts[0].host=secure-messenger.local \
   --set ingress.tls[0].hosts[0]=secure-messenger.local \
   --set ingress.tls[0].secretName=secure-messenger-tls
@@ -323,7 +341,30 @@ helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
 
 Use this when k3s is running on server `10.0.0.43` and another computer on the same network (`10.0.0.77`) needs to open the app.
 
-> **Important for this cluster:** if `ingress-nginx-controller` shows `EXTERNAL-IP <pending>` and only NodePorts are available, use port `:31121` for HTTPS access (and `:31834` for HTTP). Examples below use `:31121`.
+### 5.0 Determine ingress exposure mode first (k3s)
+
+Set namespace helper and inspect ingress controller service:
+
+```bash
+export INGRESS_NS=${INGRESS_NS:-kube-system}
+kubectl -n "$INGRESS_NS" get svc
+```
+
+- **Traefik default on k3s:** often reachable on node IP ports `80/443`.
+- **ingress-nginx NodePort mode:** use the controller NodePort (example `31121`) for HTTPS.
+
+If using ingress-nginx and unsure of HTTPS NodePort:
+
+```bash
+kubectl -n ingress-nginx get svc ingress-nginx-controller \
+  -o jsonpath='{.spec.ports[?(@.port==443)].nodePort}'
+```
+
+Set this once for commands below:
+
+```bash
+export INGRESS_HTTPS_PORT=443   # e.g. set to 31121 for ingress-nginx NodePort
+```
 
 ### 5.1 Important for video calls
 
@@ -355,8 +396,8 @@ kubectl -n "$NS" create secret tls secure-messenger-lan-tls \
 
 ```bash
 docker build -t secure-messenger-frontend:local ./frontend \
-  --build-arg VITE_API_BASE=https://api.secure-messenger.lan:31121/api \
-  --build-arg VITE_WS_BASE=wss://api.secure-messenger.lan:31121 \
+  --build-arg VITE_API_BASE=https://api.secure-messenger.lan:${INGRESS_HTTPS_PORT}/api \
+  --build-arg VITE_WS_BASE=wss://api.secure-messenger.lan:${INGRESS_HTTPS_PORT} \
   --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]'
 
 docker save secure-messenger-frontend:local -o /tmp/secure-messenger-frontend-local.tar
@@ -375,7 +416,7 @@ helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
   -n "$NS" \
   --reuse-values \
   --set-string env.DJANGO_ALLOWED_HOSTS=api.secure-messenger.lan\,10.0.0.43\,127.0.0.1 \
-  --set-string env.CORS_ALLOWED_ORIGINS=https://secure-messenger.lan:31121
+  --set-string env.CORS_ALLOWED_ORIGINS=https://secure-messenger.lan:${INGRESS_HTTPS_PORT}
 ```
 
 5) Enable ingress for both charts:
@@ -385,7 +426,7 @@ helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend \
 ```bash
 helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
-  --set ingress.className=nginx \
+  --set ingress.className="$INGRESS_CLASS" \
   --set ingress.hosts[0].host=api.secure-messenger.lan \
   --set ingress.hosts[0].paths[0].path=/api \
   --set ingress.hosts[0].paths[0].pathType=Prefix \
@@ -396,7 +437,7 @@ helm upgrade "$BACKEND_RELEASE" ./kubernetes/backend -n "$NS" --reuse-values \
 
 helm upgrade "$FRONTEND_RELEASE" ./kubernetes/frontend -n "$NS" --reuse-values \
   --set ingress.enabled=true \
-  --set ingress.className=nginx \
+  --set ingress.className="$INGRESS_CLASS" \
   --set ingress.hosts[0].host=secure-messenger.lan \
   --set ingress.hosts[0].paths[0].path=/ \
   --set ingress.hosts[0].paths[0].pathType=Prefix \
@@ -450,10 +491,10 @@ kubectl -n "$NS" get ingress
 ```
 
 ```text
-https://secure-messenger.lan:31121
+https://secure-messenger.lan:${INGRESS_HTTPS_PORT}
 ```
 
-If your ingress is later exposed directly on 443, you can switch to `https://secure-messenger.lan` and remove the explicit port.
+If `INGRESS_HTTPS_PORT=443`, you can use `https://secure-messenger.lan`.
 
 ### 5.3 TLS note for LAN
 
@@ -495,12 +536,18 @@ curl -k -I https://api.secure-messenger.lan:31121/api/
 
 Expected: HTTP response (401 is acceptable without auth; it proves reachability).
 
+If not using NodePort 31121, run with your chosen port:
+
+```bash
+curl -k -I https://api.secure-messenger.lan:${INGRESS_HTTPS_PORT}/api/
+```
+
 4) **Client (`10.0.0.77`): open frontend**
 
 Open:
 
 ```text
-https://secure-messenger.lan:31121
+https://secure-messenger.lan:${INGRESS_HTTPS_PORT}
 ```
 
 Expected: app loads without network errors in browser console.
