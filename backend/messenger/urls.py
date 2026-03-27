@@ -13,6 +13,9 @@ from .views import (
     PresenceView,
     RegisterView,
     SessionEventViewSet,
+    TestLabBootstrapView,
+    TestLabRunArtifactView,
+    TestLabTestUserManagementView,
     WorkspaceViewSet,
 )
 
@@ -33,6 +36,9 @@ urlpatterns = [
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("auth/me/", MeView.as_view(), name="me"),
+    path("test-lab/bootstrap/", TestLabBootstrapView.as_view(), name="test-lab-bootstrap"),
+    path("test-lab/runs/", TestLabRunArtifactView.as_view(), name="test-lab-runs"),
+    path("test-lab/test-users/", TestLabTestUserManagementView.as_view(), name="test-lab-test-users"),
     path("presence/", PresenceView.as_view(), name="presence"),
     path("", include(router.urls)),
 ]

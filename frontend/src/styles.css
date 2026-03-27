@@ -21,6 +21,11 @@ body {
 
 .topbar-actions { display: flex; gap: 0.5rem; align-items: center; }
 
+.topbar-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .bell-button {
   position: relative;
   min-width: 42px;
@@ -58,6 +63,184 @@ body {
   border: 1px solid #374151;
   border-radius: 12px;
   padding: 1rem;
+}
+
+.admin-test-lab-wrapper {
+  margin-top: 0.8rem;
+}
+
+.test-lab-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.test-lab-tabs {
+  margin-top: 0.8rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.test-lab-tabs button.active {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.5);
+}
+
+.test-lab-shell {
+  margin-top: 0.8rem;
+  border: 1px dashed #4b5563;
+  border-radius: 10px;
+  padding: 0.8rem;
+  background: rgba(2, 6, 23, 0.4);
+}
+
+.test-lab-shell h3 {
+  margin-top: 0;
+}
+
+.test-lab-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.test-lab-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.scenario-status {
+  grid-column: 1 / -1;
+  margin: 0.1rem 0 0.2rem;
+  font-size: 0.78rem;
+}
+
+.run-sim-btn {
+  margin-top: 0.75rem;
+}
+
+.console-strip {
+  margin-top: 0.65rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.console-step {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.72rem;
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.console-step.active {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.console-step.queued {
+  border-color: #475569;
+  color: #94a3b8;
+}
+
+.console-step.inactive {
+  border-color: #334155;
+  color: #64748b;
+}
+
+.console-step.completed {
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+.console-step.warning {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.console-step.failed {
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+.console-step.unknown {
+  border-color: #a78bfa;
+  color: #c4b5fd;
+}
+
+.run-summary {
+  margin-bottom: 0.75rem;
+}
+
+.state-running { color: #fbbf24; }
+.state-completed { color: #86efac; }
+.state-failed { color: #fca5a5; }
+.state-unknown { color: #c4b5fd; }
+.state-idle { color: #94a3b8; }
+
+.console-body-grid {
+  margin-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.test-lab-grid {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.test-lab-panel {
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: rgba(2, 6, 23, 0.45);
+}
+
+.test-lab-panel h4 {
+  margin-top: 0;
+}
+
+.test-lab-panel ul {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.test-lab-error {
+  margin-top: 0.7rem;
+}
+
+.result-evidence-list {
+  margin-top: 0.45rem !important;
+}
+
+.inline-actions {
+  display: inline-flex;
+  gap: 0.45rem;
+  margin-left: 0.5rem;
+}
+
+.bash-log-scroll {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .sidebar ul {
@@ -249,6 +432,18 @@ button { cursor: pointer; }
   }
 
   .video-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .test-lab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .test-lab-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .console-body-grid {
     grid-template-columns: 1fr;
   }
 

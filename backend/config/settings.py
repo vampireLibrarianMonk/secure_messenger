@@ -115,6 +115,37 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
+# Stage 0 test-lab foundations/guardrails placeholders.
+# These values establish explicit vocabulary and policy hooks; deeper enforcement
+# will be layered in subsequent stages.
+TEST_LAB_ENV = os.getenv("TEST_LAB_ENV", "local").strip().lower()
+TEST_LAB_ALLOWED_ENVIRONMENTS = [
+    value.strip().lower()
+    for value in os.getenv("TEST_LAB_ALLOWED_ENVIRONMENTS", "local,sandbox,staging").split(",")
+    if value.strip()
+]
+TEST_LAB_FEATURE_FLAGS = {
+    "test_menu_enabled": os.getenv("TEST_LAB_TEST_MENU_ENABLED", "1") == "1",
+    "synthetic_scenarios_enabled": os.getenv("TEST_LAB_SYNTHETIC_SCENARIOS_ENABLED", "1") == "1",
+    "verbose_diagnostics_enabled": os.getenv("TEST_LAB_VERBOSE_DIAGNOSTICS_ENABLED", "0") == "1",
+    "group_testing_enabled": os.getenv("TEST_LAB_GROUP_TESTING_ENABLED", "0") == "1",
+}
+TEST_LAB_ADMIN_USERNAMES = [
+    value.strip()
+    for value in os.getenv("TEST_LAB_ADMIN_USERNAMES", "").split(",")
+    if value.strip()
+]
+TEST_LAB_TEST_USER_USERNAMES = [
+    value.strip()
+    for value in os.getenv("TEST_LAB_TEST_USER_USERNAMES", "").split(",")
+    if value.strip()
+]
+TEST_LAB_POLICY_LIMITS = {
+    "max_active_admins": 1,
+    "max_active_test_users_default": 2,
+    "max_active_test_users_group_enabled": 3,
+}
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 if os.getenv("USE_REDIS", "0") == "1":
     CHANNEL_LAYERS = {

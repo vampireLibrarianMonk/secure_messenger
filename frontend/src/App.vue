@@ -6,7 +6,38 @@ import { useSecurityStore } from "./stores/security";
 import { useVideoStore } from "./stores/video";
 import { apiRequest } from "./lib/api";
 import { decryptFile, encryptFile, encryptText, exportPublicKey, generateConversationKey, generateIdentityKeypair } from "./lib/crypto";
+import AdminTestLabPanel from "./components/AdminTestLabPanel.vue";
 import type { Attachment } from "./types";
+
+interface TestLabBootstrapResponse {
+  roles: string[];
+  is_security_admin: boolean;
+  can_access_test_lab: boolean;
+  environment: {
+    current: string;
+    allowed: string[];
+    is_allowed: boolean;
+  };
+  feature_flags: Record<string, boolean>;
+  policy_limits: {
+    max_active_admins: number;
+    max_active_test_users_default: number;
+    max_active_test_users_group_enabled: number;
+  };
+  governance_status: {
+    active_admin_accounts: number;
+    max_active_admins: number;
+    active_test_users: number;
+    max_active_test_users: number;
+    group_testing_slot_enabled: boolean;
+    group_testing_slot_usage: number;
+    admin_limit_compliant: boolean;
+    test_user_limit_compliant: boolean;
+    active_admin_usernames: string[];
+    active_test_usernames: string[];
+  };
+  stage: string;
+}
 
 const auth = useAuthStore();
 const chat = useChatStore();
@@ -39,6 +70,9 @@ const memberNamesByConversation = ref<Record<number, Record<number, string>>>({}
 const localVideoEl = ref<HTMLVideoElement | null>(null);
 const remoteVideoEl = ref<HTMLVideoElement | null>(null);
 const fileInputEl = ref<HTMLInputElement | null>(null);
+const testLabBootstrap = ref<TestLabBootstrapResponse | null>(null);
+const testLabError = ref("");
+const showAdminTestLab = ref(false);
 
 function nextMessageIndex(): number {
   // Backend currently validates against 32-bit signed max (2147483647),
@@ -91,6 +125,7 @@ let countdownTimer: number | null = null;
 
 const notificationCount = computed(() => Object.values(unreadByConversation.value).reduce((sum, v) => sum + v, 0));
 const hasNotifications = computed(() => notificationCount.value > 0);
+const canOpenAdminTestLab = computed(() => Boolean(testLabBootstrap.value?.can_access_test_lab));
 const secondsUntilLock = computed(() => {
   if (security.locked) return 0;
   const elapsed = Math.floor((nowTick.value - security.lastActivityAt) / 1000);
@@ -289,12 +324,39 @@ async function ensureDeviceRegistration() {
 async function bootstrap() {
   if (!auth.accessToken) return;
   await auth.loadMe();
+  await loadTestLabBootstrap();
   loadSeenNotificationState();
   await ensureDeviceRegistration();
   await refreshConversations();
   if (chat.activeConversationId) {
     await chat.loadMessages(chat.activeConversationId);
   }
+}
+
+async function loadTestLabBootstrap() {
+  if (!auth.accessToken) return;
+  testLabError.value = "";
+  try {
+    testLabBootstrap.value = await apiRequest<TestLabBootstrapResponse>("/test-lab/bootstrap/", {
+      token: auth.accessToken,
+    });
+  } catch (error) {
+    testLabBootstrap.value = null;
+    testLabError.value = error instanceof Error ? error.message : "Failed to load test-lab guardrails";
+  }
+}
+
+function openAdminTestLab() {
+  if (!canOpenAdminTestLab.value) {
+    testLabError.value = "Admin Test Lab is unavailable for this account or environment.";
+    return;
+  }
+  testLabError.value = "";
+  showAdminTestLab.value = true;
+}
+
+function closeAdminTestLab() {
+  showAdminTestLab.value = false;
 }
 
 async function submitAuth() {
@@ -324,6 +386,8 @@ async function resetLockedSession() {
   security.resetLocalSecurity();
   await video.endCall(false);
   chat.disconnectSocket();
+  showAdminTestLab.value = false;
+  testLabBootstrap.value = null;
   await auth.logout();
 }
 
@@ -345,6 +409,8 @@ async function logout() {
   notificationsReady.value = false;
   clearNotifications();
   activeMessageIds.clear();
+  showAdminTestLab.value = false;
+  testLabBootstrap.value = null;
   await auth.logout();
 }
 
@@ -756,6 +822,7 @@ onUnmounted(() => {
       <h1>Secure Messenger</h1>
       <div v-if="auth.user" class="topbar-actions">
         <span class="muted">{{ auth.user.username }}</span>
+        <button class="ghost" :disabled="!canOpenAdminTestLab" @click="openAdminTestLab">Admin Test Lab</button>
         <button
           class="ghost bell-button"
           :class="{ alerted: hasNotifications }"
@@ -789,6 +856,20 @@ onUnmounted(() => {
       <button @click="unlock">Unlock</button>
       <button class="ghost" @click="resetLockedSession">Reset locked session</button>
       <p v-if="unlockError" class="error">{{ unlockError }}</p>
+    </section>
+
+    <section v-else-if="showAdminTestLab" class="admin-test-lab-wrapper">
+      <AdminTestLabPanel
+        v-if="testLabBootstrap"
+        :bootstrap="testLabBootstrap"
+        :access-token="auth.accessToken ?? undefined"
+        @close="closeAdminTestLab"
+      />
+      <article v-else class="card">
+        <h2>Admin Secure Test Lab</h2>
+        <p class="error">{{ testLabError || "Unable to load test-lab bootstrap data." }}</p>
+        <button class="ghost" @click="closeAdminTestLab">Back to Messenger</button>
+      </article>
     </section>
 
     <main v-else class="layout">
@@ -953,5 +1034,7 @@ onUnmounted(() => {
         <p v-if="composerError" class="error">{{ composerError }}</p>
       </section>
     </main>
+
+    <p v-if="testLabError && auth.isAuthenticated && !showAdminTestLab" class="error test-lab-error">{{ testLabError }}</p>
   </div>
 </template>
