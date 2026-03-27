@@ -6,7 +6,7 @@ import { useSecurityStore } from "./stores/security";
 import { useVideoStore } from "./stores/video";
 import { apiRequest } from "./lib/api";
 import { decryptFile, encryptFile, encryptText, exportPublicKey, generateConversationKey, generateIdentityKeypair } from "./lib/crypto";
-import type { Attachment } from "./types";
+import type { Attachment, SecurityAnalysisRun, SecurityJourneyReport } from "./types";
 
 const auth = useAuthStore();
 const chat = useChatStore();
@@ -40,6 +40,86 @@ const localVideoEl = ref<HTMLVideoElement | null>(null);
 const remoteVideoEl = ref<HTMLVideoElement | null>(null);
 const fileInputEl = ref<HTMLInputElement | null>(null);
 
+const adminMenuSections = ref<Array<{ key: string; label: string }>>([]);
+const adminActiveTab = ref("overview");
+const adminReports = ref<SecurityJourneyReport[]>([]);
+const adminSelectedReportId = ref<number | null>(null);
+const adminDashboard = ref<Record<string, unknown> | null>(null);
+const adminCompiled = ref<Record<string, unknown> | null>(null);
+const adminRuns = ref<SecurityAnalysisRun[]>([]);
+const adminAuditEvents = ref<Array<Record<string, unknown>>>([]);
+const adminSnapshots = ref<Array<Record<string, unknown>>>([]);
+const adminSnapshotVerify = ref<Record<number, { match: boolean; stored_sha256: string; recomputed_sha256: string }>>({});
+const adminError = ref("");
+const adminStatus = ref("");
+const adminBusy = ref(false);
+const adminRunInProgress = ref(false);
+const adminStatusLog = ref<Array<{ ts: string; message: string }>>([]);
+const adminNewReportTitle = ref("Security Journey Analysis");
+const adminRunFlowType = ref<"dm" | "video" | "both">("both");
+const adminSelectedChecks = ref<string[]>(["dm", "video", "logging"]);
+const adminResetOldPassword = ref("");
+const adminResetNewPassword = ref("");
+const adminResetConfirmPassword = ref("");
+const adminResetStatus = ref("");
+
+const adminTestCatalog: Array<{ key: string; title: string; plainEnglish: string }> = [
+  {
+    key: "dm",
+    title: "Direct Message Journey",
+    plainEnglish: "Checks how a message is created, protected, transported, stored, and opened by the recipient.",
+  },
+  {
+    key: "video",
+    title: "Live Video Journey",
+    plainEnglish: "Checks call setup, signaling, ICE/TURN routing, and media protection visibility.",
+  },
+  {
+    key: "logging",
+    title: "Logging & Exposure Controls",
+    plainEnglish: "Checks whether logs/telemetry avoid sensitive plaintext and keep only safe metadata.",
+  },
+];
+
+const compiledDmStages = computed(
+  () => ((adminCompiled.value?.dm_stage_by_stage_journey as Array<Record<string, unknown>>) ?? []),
+);
+const compiledVideoStages = computed(
+  () => ((adminCompiled.value?.video_stage_by_stage_journey as Array<Record<string, unknown>>) ?? []),
+);
+const compiledVerification = computed(
+  () => ((adminCompiled.value?.verification_matrix as Array<Record<string, unknown>>) ?? []),
+);
+const compiledScopeCoverage = computed(
+  () => ((adminCompiled.value?.scope_coverage as Array<Record<string, unknown>>) ?? []),
+);
+const compiledLoggingDesign = computed(
+  () => ((adminCompiled.value?.logging_design as Array<Record<string, unknown>>) ?? []),
+);
+const compiledThreatModel = computed(
+  () => ((adminCompiled.value?.threat_model as Array<Record<string, unknown>>) ?? []),
+);
+const compiledGaps = computed(
+  () => ((adminCompiled.value?.top_10_likely_security_gaps as Array<Record<string, unknown>>) ?? []),
+);
+const compiledNextTests = computed(
+  () => ((adminCompiled.value?.highest_value_next_tests as Array<Record<string, unknown>>) ?? []),
+);
+const compiledReality = computed(
+  () => ((adminCompiled.value?.reality_check_answers as Record<string, string>) ?? {}),
+);
+
+function pushAdminStatus(message: string) {
+  const stamp = new Date().toLocaleTimeString();
+  adminStatus.value = message;
+  adminStatusLog.value.unshift({ ts: stamp, message });
+  adminStatusLog.value = adminStatusLog.value.slice(0, 8);
+}
+
+function describeCheck(check: string): string {
+  return adminTestCatalog.find((item) => item.key === check)?.title ?? check;
+}
+
 function nextMessageIndex(): number {
   // Backend currently validates against 32-bit signed max (2147483647),
   // so use unix seconds (safe through year 2038) instead of Date.now() ms.
@@ -58,6 +138,7 @@ const activeConversation = computed(() =>
 const showStartCall = computed(() => Boolean(activeConversation.value) && !video.inCall && !video.hasIncomingCallIntent);
 const showJoinCall = computed(() => Boolean(activeConversation.value) && !video.inCall && video.hasIncomingCallIntent);
 const showEndCall = computed(() => video.inCall || video.status === "testing" || video.status === "active");
+const isSecurityAdmin = computed(() => Boolean(auth.user?.is_security_admin) && !auth.user?.must_reset_password);
 
 const formattedVideoDiagnostics = computed(() => {
   const d = video.diagnostics;
@@ -295,6 +376,192 @@ async function bootstrap() {
   if (chat.activeConversationId) {
     await chat.loadMessages(chat.activeConversationId);
   }
+  if (isSecurityAdmin.value) {
+    await loadAdminWorkspace();
+  }
+}
+
+async function loadAdminWorkspace() {
+  if (!auth.accessToken || !isSecurityAdmin.value) return;
+  adminError.value = "";
+  adminStatus.value = "";
+  adminBusy.value = true;
+  try {
+    const [menu, reports] = await Promise.all([
+      apiRequest<{ sections: Array<{ key: string; label: string }> }>("/admin/security/menu/", { token: auth.accessToken }),
+      apiRequest<SecurityJourneyReport[]>("/admin/security/reports/", { token: auth.accessToken }),
+    ]);
+    adminMenuSections.value = menu.sections;
+    adminReports.value = reports;
+    if (!adminSelectedReportId.value && reports.length > 0) {
+      adminSelectedReportId.value = reports[0].id;
+    }
+    if (adminSelectedReportId.value) {
+      await loadAdminReportData(adminSelectedReportId.value);
+    }
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed loading admin workspace";
+  } finally {
+    adminBusy.value = false;
+  }
+}
+
+async function loadAdminReportData(reportId: number) {
+  if (!auth.accessToken) return;
+  adminBusy.value = true;
+  adminError.value = "";
+  try {
+    const [dashboard, compiled, runs, audits, snapshots] = await Promise.all([
+      apiRequest<Record<string, unknown>>(`/admin/security/dashboard/?report=${reportId}`, { token: auth.accessToken }),
+      apiRequest<Record<string, unknown>>(`/admin/security/reports/${reportId}/compiled/`, { token: auth.accessToken }),
+      apiRequest<SecurityAnalysisRun[]>(`/admin/security/runs/?report=${reportId}`, { token: auth.accessToken }),
+      apiRequest<Array<Record<string, unknown>>>(`/admin/security/audit-events/?report=${reportId}`, { token: auth.accessToken }),
+      apiRequest<Array<Record<string, unknown>>>(`/admin/security/snapshots/?report=${reportId}`, { token: auth.accessToken }),
+    ]);
+    adminDashboard.value = dashboard;
+    adminCompiled.value = compiled;
+    adminRuns.value = runs;
+    adminAuditEvents.value = audits;
+    adminSnapshots.value = snapshots;
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed loading report data";
+  } finally {
+    adminBusy.value = false;
+  }
+}
+
+async function createAdminReport() {
+  if (!auth.accessToken) return;
+  adminBusy.value = true;
+  adminError.value = "";
+  try {
+    const report = await apiRequest<SecurityJourneyReport>("/admin/security/reports/", {
+      method: "POST",
+      token: auth.accessToken,
+      body: {
+        title: adminNewReportTitle.value.trim() || "Security Journey Analysis",
+        flow_type: "both",
+        status: "draft",
+      },
+    });
+    adminReports.value.unshift(report);
+    adminSelectedReportId.value = report.id;
+    pushAdminStatus(`Created report #${report.id}.`);
+    await loadAdminReportData(report.id);
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed creating report";
+  } finally {
+    adminBusy.value = false;
+  }
+}
+
+async function runAdminAnalysis() {
+  if (!auth.accessToken) return;
+  if (!adminSelectedReportId.value) {
+    adminError.value = "Select a report first (or create one) before triggering a run.";
+    return;
+  }
+  const checks = adminSelectedChecks.value.filter((v) => ["dm", "video", "logging"].includes(v));
+  if (checks.length === 0) {
+    adminError.value = "Select at least one check (DM, Video, or Logging).";
+    return;
+  }
+  adminBusy.value = true;
+  adminRunInProgress.value = true;
+  adminError.value = "";
+  pushAdminStatus(`Run requested for flow=${adminRunFlowType.value}.`);
+  checks.forEach((check) => {
+    pushAdminStatus(`Queued test: ${describeCheck(check)}.`);
+  });
+  try {
+    const response = await apiRequest<{ run_id: number; run_status: string }>("/admin/security/run/", {
+      method: "POST",
+      token: auth.accessToken,
+      body: {
+        report_id: adminSelectedReportId.value,
+        flow_type: adminRunFlowType.value,
+        requested_checks: checks,
+      },
+    });
+    pushAdminStatus(`Run #${response.run_id} ${response.run_status}. Refreshing dashboard artifacts...`);
+    await loadAdminReportData(adminSelectedReportId.value);
+    pushAdminStatus(`Run #${response.run_id} fully loaded.`);
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed triggering analysis run";
+  } finally {
+    adminRunInProgress.value = false;
+    adminBusy.value = false;
+  }
+}
+
+async function createSnapshot() {
+  if (!auth.accessToken || !adminSelectedReportId.value) return;
+  adminBusy.value = true;
+  adminError.value = "";
+  try {
+    await apiRequest(`/admin/security/reports/${adminSelectedReportId.value}/snapshots/`, {
+      method: "POST",
+      token: auth.accessToken,
+      body: { notes: "UI snapshot" },
+    });
+    pushAdminStatus("Snapshot created.");
+    await loadAdminReportData(adminSelectedReportId.value);
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed creating snapshot";
+  } finally {
+    adminBusy.value = false;
+  }
+}
+
+async function verifySnapshot(snapshotId: number) {
+  if (!auth.accessToken) return;
+  adminError.value = "";
+  try {
+    const result = await apiRequest<{ match: boolean; stored_sha256: string; recomputed_sha256: string }>(
+      `/admin/security/snapshots/${snapshotId}/verify/`,
+      { token: auth.accessToken },
+    );
+    adminSnapshotVerify.value[snapshotId] = result;
+    pushAdminStatus(`Snapshot #${snapshotId} integrity ${result.match ? "verified" : "mismatch"}.`);
+  } catch (error) {
+    adminError.value = error instanceof Error ? error.message : "Failed verifying snapshot";
+  }
+}
+
+async function completeAdminPasswordReset() {
+  if (!auth.accessToken) return;
+  adminResetStatus.value = "";
+  if (!adminResetOldPassword.value || !adminResetNewPassword.value) {
+    adminResetStatus.value = "Current and new password are required.";
+    return;
+  }
+  if (adminResetNewPassword.value !== adminResetConfirmPassword.value) {
+    adminResetStatus.value = "New passwords do not match.";
+    return;
+  }
+  try {
+    await apiRequest("/auth/password-reset/", {
+      method: "POST",
+      token: auth.accessToken,
+      body: {
+        old_password: adminResetOldPassword.value,
+        new_password: adminResetNewPassword.value,
+      },
+    });
+    adminResetStatus.value = "Password reset complete. Reloading admin access...";
+    adminResetOldPassword.value = "";
+    adminResetNewPassword.value = "";
+    adminResetConfirmPassword.value = "";
+    await auth.loadMe();
+    await loadAdminWorkspace();
+  } catch (error) {
+    adminResetStatus.value = error instanceof Error ? error.message : "Password reset failed.";
+  }
+}
+
+function selectAdminReport(event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value);
+  adminSelectedReportId.value = Number.isFinite(value) ? value : null;
 }
 
 async function submitAuth() {
@@ -705,6 +972,14 @@ watch(
   { deep: true },
 );
 
+watch(
+  () => adminSelectedReportId.value,
+  async (reportId, prev) => {
+    if (!reportId || reportId === prev || !isSecurityAdmin.value) return;
+    await loadAdminReportData(reportId);
+  },
+);
+
 function updatePasscode() {
   passcodeMessage.value = "";
   if (newPasscode.value.length < 4) {
@@ -792,6 +1067,20 @@ onUnmounted(() => {
     </section>
 
     <main v-else class="layout">
+      <section v-if="auth.user?.must_reset_password" class="card" style="grid-column: 1 / -1;">
+        <h3>Security Admin Password Reset Required</h3>
+        <p class="muted">
+          Your bootstrap account must reset password before admin security endpoints are enabled.
+        </p>
+        <div class="admin-controls">
+          <input v-model="adminResetOldPassword" type="password" placeholder="Current password" />
+          <input v-model="adminResetNewPassword" type="password" placeholder="New password" />
+          <input v-model="adminResetConfirmPassword" type="password" placeholder="Confirm new password" />
+          <button @click="completeAdminPasswordReset">Reset password</button>
+        </div>
+        <p v-if="adminResetStatus" class="muted">{{ adminResetStatus }}</p>
+      </section>
+
       <aside class="sidebar card">
         <h3>Conversations</h3>
         <ul>
@@ -951,6 +1240,141 @@ onUnmounted(() => {
           <input ref="fileInputEl" class="file-hidden" type="file" @change="sendEncryptedFile" />
         </footer>
         <p v-if="composerError" class="error">{{ composerError }}</p>
+
+        <section v-if="isSecurityAdmin" class="admin-workspace">
+          <header class="admin-head">
+            <h3>Admin Security Journey Workspace</h3>
+            <span v-if="adminBusy" class="muted">Loading…</span>
+          </header>
+          <p v-if="adminError" class="error">{{ adminError }}</p>
+          <p v-if="adminStatus" class="muted">{{ adminStatus }}</p>
+          <div v-if="adminStatusLog.length" class="admin-panel" style="margin-bottom:0.6rem;">
+            <div v-for="item in adminStatusLog" :key="`${item.ts}-${item.message}`" class="admin-item">
+              [{{ item.ts }}] {{ item.message }}
+            </div>
+          </div>
+
+          <div class="admin-controls">
+            <input v-model="adminNewReportTitle" placeholder="New report title" />
+            <button class="ghost" @click="createAdminReport">Create report</button>
+            <select :value="adminSelectedReportId ?? ''" @change="selectAdminReport">
+              <option disabled value="">Select report</option>
+              <option v-for="r in adminReports" :key="r.id" :value="r.id">
+                #{{ r.id }} · {{ r.title }} ({{ r.status }})
+              </option>
+            </select>
+          </div>
+
+          <nav class="admin-tabs">
+            <button
+              v-for="section in adminMenuSections"
+              :key="section.key"
+              class="ghost"
+              :class="{ active: adminActiveTab === section.key }"
+              @click="adminActiveTab = section.key"
+            >
+              {{ section.label }}
+            </button>
+          </nav>
+
+          <section v-if="adminActiveTab === 'run_analysis'" class="admin-panel">
+            <div class="admin-controls">
+              <select v-model="adminRunFlowType">
+                <option value="both">DM + Video</option>
+                <option value="dm">DM only</option>
+                <option value="video">Video only</option>
+              </select>
+              <select v-model="adminSelectedChecks" multiple size="3" title="Select one or more tests">
+                <option v-for="test in adminTestCatalog" :key="test.key" :value="test.key">
+                  {{ test.title }}
+                </option>
+              </select>
+              <button :disabled="!adminSelectedReportId || adminBusy || adminRunInProgress" @click="runAdminAnalysis">
+                {{ adminRunInProgress ? "Running..." : "Trigger run" }}
+              </button>
+            </div>
+            <div class="admin-item" v-for="test in adminTestCatalog" :key="`desc-${test.key}`">
+              <strong>{{ test.title }}</strong>: {{ test.plainEnglish }}
+            </div>
+            <div v-for="run in adminRuns" :key="run.id" class="admin-item">
+              Run #{{ run.id }} · {{ run.status }} · {{ new Date(run.created_at).toLocaleString() }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'overview'" class="admin-panel">
+            <pre>{{ adminDashboard }}</pre>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'dm_journey'" class="admin-panel">
+            <div v-for="stage in compiledDmStages" :key="String(stage.id)" class="admin-item">
+              DM-{{ stage.stage_number }}: {{ stage.stage_name }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'video_journey'" class="admin-panel">
+            <div v-for="stage in compiledVideoStages" :key="String(stage.id)" class="admin-item">
+              Video-{{ stage.stage_number }}: {{ stage.stage_name }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'verification_matrix'" class="admin-panel">
+            <div v-for="item in compiledVerification" :key="String(item.id)" class="admin-item">
+              {{ item.stage_label }} — {{ item.expected_security_property }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'scope_coverage'" class="admin-panel">
+            <div v-for="item in compiledScopeCoverage" :key="String(item.id)" class="admin-item">
+              {{ item.area }} · {{ item.present_in_implementation ? 'present' : 'unknown/unverified' }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'logging_design'" class="admin-panel">
+            <div v-for="item in compiledLoggingDesign" :key="String(item.id)" class="admin-item">
+              {{ item.field_name }} → {{ item.classification }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'threat_model'" class="admin-panel">
+            <div v-for="item in compiledThreatModel" :key="String(item.id)" class="admin-item">
+              {{ item.threat }} · {{ item.severity }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'gaps_next_tests'" class="admin-panel">
+            <h4>Top Gaps</h4>
+            <div v-for="item in compiledGaps" :key="`gap-${String(item.id)}`" class="admin-item">
+              {{ item.rank }}. {{ item.title }}
+            </div>
+            <h4>Next Tests</h4>
+            <div v-for="item in compiledNextTests" :key="`test-${String(item.id)}`" class="admin-item">
+              {{ item.priority }} · {{ item.name }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'reality_check'" class="admin-panel">
+            <div v-for="(value, key) in compiledReality" :key="key" class="admin-item">
+              <strong>{{ key }}</strong>: {{ value }}
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'evidence_snapshots'" class="admin-panel">
+            <button class="ghost" @click="createSnapshot">Create snapshot</button>
+            <div v-for="item in adminSnapshots" :key="String(item.id)" class="admin-item">
+              Snapshot #{{ item.id }} · {{ item.payload_sha256 }}
+              <button class="ghost" @click="verifySnapshot(Number(item.id))">Verify</button>
+              <div v-if="adminSnapshotVerify[Number(item.id)]">
+                match: {{ adminSnapshotVerify[Number(item.id)].match }}
+              </div>
+            </div>
+          </section>
+
+          <section v-else-if="adminActiveTab === 'audit_trail'" class="admin-panel">
+            <div v-for="item in adminAuditEvents" :key="String(item.id)" class="admin-item">
+              {{ item.action }} · {{ item.created_at }}
+            </div>
+          </section>
+        </section>
       </section>
     </main>
   </div>

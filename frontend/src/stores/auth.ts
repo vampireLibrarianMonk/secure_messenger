@@ -5,7 +5,13 @@ import type { AuthResponse } from "../types";
 interface AuthState {
   accessToken: string | null;
   refreshToken: string | null;
-  user: { id: number; username: string; email: string } | null;
+  user: {
+    id: number;
+    username: string;
+    email: string;
+    must_reset_password?: boolean;
+    is_security_admin?: boolean;
+  } | null;
 }
 
 const ACCESS_KEY = "sm_access";

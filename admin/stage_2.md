@@ -1,16 +1,18 @@
-# Stage 2 — Security Journey Data Model + Admin API Scaffolding Verification
+# Stage 2 — Data-Model Rework for Stage Sequences + Scope Coverage
 
-This stage validates that admin-only APIs exist for building the security journey analysis artifacts:
+This stage is reworked against:
 
-- Security journey reports
-- Stage-by-stage journey entries (DM/video)
-- Security verification matrix items
+- `requirements_mds/ADMIN_SECURITY_JOURNEY_ANALYSIS_REQUIREMENTS.md`
+
+and focuses on Section **4** (required outputs per flow), Section **5** (scope coverage checklist), and Section **13** (output structure).
+
+It validates that admin-only APIs exist for building the analysis corpus with explicit stage sequencing and implementation-coverage evidence.
 
 ## Scope clarification: what Stage 2 is (and is not)
 
-Stage 2 is **not only** a reports phase.
+Stage 2 is the **core data-structure phase** for report composition.
 
-Stage 2 is the **data-model + admin API scaffolding phase** for the security-analysis capability, and includes three artifact layers:
+It includes four artifact layers:
 
 1. **Reports** (`SecurityJourneyReport`)
    - Top-level analysis container for a DM/video/both assessment.
@@ -18,8 +20,10 @@ Stage 2 is the **data-model + admin API scaffolding phase** for the security-ana
    - Per-step lifecycle breakdown entries (e.g., auth, encryption, transport, delivery).
 3. **Verification matrix items** (`SecurityVerificationMatrixItem`)
    - Stage-linked evidence/testing rows (expected property, test method, pass/fail criteria, remediation).
+4. **Scope coverage items** (`SecurityScopeCoverageItem`)
+   - Explicit per-report tracking for whether each required scope area is present in implementation, with evidence/notes.
 
-So reports are only one part of Stage 2; this stage establishes the full structured backend foundation used by later stages.
+So reports are only one part of Stage 2; this stage establishes structured coverage across both lifecycle stages and implementation scope.
 
 ## What was implemented in Stage 2
 
@@ -27,12 +31,18 @@ So reports are only one part of Stage 2; this stage establishes the full structu
   - `SecurityJourneyReport`
   - `SecurityJourneyStage`
   - `SecurityVerificationMatrixItem`
-- New migration:
+  - `SecurityScopeCoverageItem`
+- New migrations:
   - `backend/messenger/migrations/0002_security_journey_models.py`
+  - `backend/messenger/migrations/0008_stage2_scope_coverage.py`
 - Admin-only API endpoints (JWT + `IsSecurityAdmin`):
   - `GET/POST /api/admin/security/reports/`
   - `GET/POST /api/admin/security/stages/`
+  - `GET/POST /api/admin/security/scope-coverage/`
   - `GET/POST /api/admin/security/verification-matrix/`
+
+- Compiled payload now includes:
+  - `scope_coverage`
 
 ## 1) Build updated backend image
 
@@ -118,18 +128,37 @@ curl -s -X POST http://127.0.0.1:8000/api/admin/security/verification-matrix/ \
   }"
 ```
 
-## 7) Verify list/filter behavior
+## 7) Add scope coverage item
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/admin/security/scope-coverage/ \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -d "{
+    \"report\": $REPORT_ID,
+    \"area\": \"TURN/STUN usage\",
+    \"present_in_implementation\": true,
+    \"evidence\": \"frontend/src/stores/video.ts\",
+    \"notes\": \"Candidate handling paths identified\"
+  }"
+```
+
+## 8) Verify list/filter behavior
 
 ```bash
 curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
   "http://127.0.0.1:8000/api/admin/security/stages/?report=$REPORT_ID&flow_type=dm"
+
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "http://127.0.0.1:8000/api/admin/security/scope-coverage/?report=$REPORT_ID"
 ```
 
 Expected:
 
 - Returns at least one stage with the created `report` and `flow_type=dm`.
+- Returns at least one scope-coverage row for the report.
 
-## 8) Negative authz check (non-admin)
+## 9) Negative authz check (non-admin)
 
 Login with non-admin user and call:
 

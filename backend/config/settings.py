@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,6 +10,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
 load_dotenv(PROJECT_ROOT / ".env")
+
+
+class BootstrapRedactionFilter(logging.Filter):
+    REDACTED = "[REDACTED]"
+
+    def filter(self, record):
+        msg = str(record.getMessage())
+        for env_name in ("BOOTSTRAP_ADMIN_PASSWORD",):
+            secret = os.getenv(env_name, "")
+            if secret:
+                msg = msg.replace(secret, self.REDACTED)
+        record.msg = msg
+        record.args = ()
+        return True
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-change-me-please-use-32+bytes-minimum-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
@@ -129,3 +144,32 @@ else:
             "BACKEND": "channels.layers.InMemoryChannelLayer",
         }
     }
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "filters": {
+        "bootstrap_redaction": {
+            "()": "config.settings.BootstrapRedactionFilter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "filters": ["bootstrap_redaction"],
+        },
+    },
+    "loggers": {
+        "security.bootstrap": {
+            "handlers": ["console"],
+            "level": os.getenv("SECURITY_BOOTSTRAP_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}

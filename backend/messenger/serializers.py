@@ -8,8 +8,16 @@ from .models import (
     ConversationMember,
     Device,
     MessageEnvelope,
+    SecurityGapItem,
+    SecurityNextTestItem,
+    SecurityAnalysisAuditEvent,
+    SecurityReportSnapshot,
     SecurityJourneyReport,
     SecurityJourneyStage,
+    SecurityScopeCoverageItem,
+    SecurityAnalysisRun,
+    SecurityLoggingFieldPolicy,
+    SecurityThreatModelItem,
     SecurityVerificationMatrixItem,
     SessionEvent,
     Workspace,
@@ -177,6 +185,22 @@ class SecurityJourneyStageSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
 
 
+class SecurityScopeCoverageItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityScopeCoverageItem
+        fields = (
+            "id",
+            "report",
+            "area",
+            "present_in_implementation",
+            "evidence",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
 class SecurityVerificationMatrixItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecurityVerificationMatrixItem
@@ -195,3 +219,131 @@ class SecurityVerificationMatrixItemSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityLoggingFieldPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityLoggingFieldPolicy
+        fields = (
+            "id",
+            "report",
+            "field_name",
+            "classification",
+            "rationale",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityThreatModelItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityThreatModelItem
+        fields = (
+            "id",
+            "report",
+            "flow_type",
+            "threat",
+            "affected_stages",
+            "likely_indicators",
+            "controls",
+            "residual_risk",
+            "severity",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityGapItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityGapItem
+        fields = (
+            "id",
+            "report",
+            "rank",
+            "title",
+            "description",
+            "evidence",
+            "severity",
+            "recommended_remediation",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityNextTestItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SecurityNextTestItem
+        fields = (
+            "id",
+            "report",
+            "priority",
+            "name",
+            "scope",
+            "method",
+            "pass_fail_criteria",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+
+
+class SecurityAnalysisAuditEventSerializer(serializers.ModelSerializer):
+    actor_username = serializers.CharField(source="actor.username", read_only=True)
+
+    class Meta:
+        model = SecurityAnalysisAuditEvent
+        fields = (
+            "id",
+            "actor",
+            "actor_username",
+            "report",
+            "action",
+            "details",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("actor", "created_at", "updated_at")
+
+
+class SecurityReportSnapshotSerializer(serializers.ModelSerializer):
+    generated_by_username = serializers.CharField(source="generated_by.username", read_only=True)
+
+    class Meta:
+        model = SecurityReportSnapshot
+        fields = (
+            "id",
+            "report",
+            "generated_by",
+            "generated_by_username",
+            "snapshot_format",
+            "payload",
+            "payload_sha256",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("generated_by", "payload", "payload_sha256", "created_at", "updated_at")
+
+
+class SecurityAnalysisRunSerializer(serializers.ModelSerializer):
+    triggered_by_username = serializers.CharField(source="triggered_by.username", read_only=True)
+
+    class Meta:
+        model = SecurityAnalysisRun
+        fields = (
+            "id",
+            "report",
+            "triggered_by",
+            "triggered_by_username",
+            "flow_type",
+            "requested_checks",
+            "status",
+            "run_summary",
+            "failure_reason",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("triggered_by", "run_summary", "failure_reason", "created_at", "updated_at")

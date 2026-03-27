@@ -332,3 +332,129 @@ This admin capability is considered complete when:
 4. It provides defensible proof paths for security claims without exposing user content.
 5. It preserves strict no-content-read access for admins.
 6. It includes secure, repeatable Docker-based first-admin provisioning that does not expose credentials.
+
+---
+
+## 17) Universal Admin Menu + Organized UI Requirement
+
+The capability must provide a **single universal admin security menu** that allows authorized users to trigger all required functionality and view results in a coherent, evidence-first interface.
+
+### 17.1 Universal menu structure (required)
+
+The menu must include, at minimum, these sections:
+
+1. **Overview / Dashboard**
+   - Report status summary (draft/review/final)
+   - Last run time and actor
+   - Open high-severity gaps
+2. **Run Analysis**
+   - Trigger analysis run (DM, Video, Both)
+   - Select optional checks (logging, threat review, scope coverage validation)
+   - Show run state (queued/running/completed/failed)
+3. **DM Journey**
+   - Stage-by-stage table and detail panel
+4. **Video Journey**
+   - Stage-by-stage table and detail panel
+5. **Verification Matrix**
+   - Test properties, evidence links, pass/fail readiness
+6. **Scope Coverage**
+   - Checklist of required scope areas with present/absent/unknown markers
+7. **Logging Design**
+   - Field policy classifications (allowed/hashed/redacted/forbidden)
+8. **Threat Model**
+   - Threats, indicators, controls, residual risk
+9. **Top Gaps & Next Tests**
+   - Ranked top 10 likely gaps and prioritized next tests
+10. **Reality Check**
+   - Mandatory direct answers for Section 11 questions
+11. **Evidence & Snapshots**
+   - Compiled exports, snapshots, SHA-256 hashes, integrity checks
+12. **Audit Trail**
+   - Run triggers, compiled views, exports, snapshots, retention actions
+
+### 17.2 Interaction requirements
+
+1. Every menu section must support filtering by `report_id` and optionally `flow_type`.
+2. UI must preserve stable correlation context (e.g., report ID, run ID, actor, timestamps) while navigating tabs.
+3. Trigger actions (run/export/snapshot) must return immediate confirmation and status feedback.
+4. Any asynchronous operations must expose progress and final state clearly.
+5. Detail views must support drill-down without requiring raw JSON inspection.
+6. **Run Analysis** must present tests in a **selection box style control** (single or multi-select as configured) instead of requiring users to infer backend check keys.
+7. The selected test options must map to backend checks deterministically and be visible before execution.
+
+### 17.2.1 Plain-English test catalog requirement
+
+The Run Analysis section must include a human-readable test catalog so non-developer operators can understand what each test validates.
+
+Minimum catalog entries:
+
+1. **Direct Message Journey**
+   - Plain-English description of DM lifecycle validation and exposure checks.
+2. **Live Video Journey**
+   - Plain-English description of signaling/media path and visibility checks.
+3. **Logging & Exposure Controls**
+   - Plain-English description of metadata logging guardrails and plaintext prevention.
+
+Rules:
+
+1. Labels must avoid internal jargon-only names where possible.
+2. Backend check identifiers may exist, but UI must prioritize plain-English wording.
+3. If test catalog definitions change, UI and backend mappings must remain synchronized.
+
+### 17.3 Data safety and display constraints
+
+1. UI must never render plaintext DM bodies, decrypted attachments, or media payload content.
+2. Sensitive fields must be displayed according to logging policy classification:
+   - allowed
+   - hashed/tokenized
+   - redacted
+   - forbidden
+3. If evidence is missing, UI must display `unknown/unverified` explicitly (not blank or implied pass).
+4. Any “secure” badge/indicator is prohibited unless backed by required evidence paths.
+
+### 17.4 Access control and authorization behavior in UI
+
+1. Menu visibility and actions must be restricted to authorized admin/security roles.
+2. Users failing first-login password reset policy must not access security-analysis UI actions.
+3. Non-admin users must be denied access and shown a generic authorization error without leaking system internals.
+
+### 17.5 Required UX outputs
+
+The UI must provide these views in addition to API output:
+
+1. **Organized report workspace** with pinned sections matching Section 13 output order.
+2. **Evidence panel** per stage linking to code/config/infra/protocol verification notes.
+3. **Audit timeline** sorted by timestamp with actor and action.
+4. **Snapshot integrity panel** showing stored hash, recomputed hash, and match/mismatch status.
+5. **Run activity stream** that clearly logs what is being tested and in what order.
+
+### 17.5.1 Run-state and operator feedback requirement
+
+Run operations must provide explicit operator feedback throughout the full lifecycle.
+
+Required states/messages:
+
+1. Run requested
+2. Test(s) queued with readable names
+3. Running/in-progress
+4. Completed or failed
+5. Post-run refresh complete (dashboard/artifacts updated)
+
+UI behavior constraints:
+
+1. Trigger button must be disabled while run state is in-progress.
+2. Trigger button label should reflect active state (example: `Running...`).
+3. Errors must be explicit and actionable (e.g., no report selected, no tests selected).
+4. Feedback should include timestamps where possible to aid operator traceability.
+
+### 17.6 Verification criteria for universal menu
+
+1. Admin can navigate all required sections from one menu without direct API calls.
+2. Admin can trigger run/export/snapshot from UI and observe corresponding audit events.
+3. UI never reveals prohibited content fields under normal or error paths.
+4. UI accurately reflects unknown/unverified states when evidence is absent.
+5. Section names and ordering remain consistent with this requirements document.
+6. Run Analysis uses plain-English test labels with clear descriptions.
+7. Test selection is possible through an explicit selection-box style control.
+8. While a run is active, trigger control is disabled until completion/failure state resolves.
+9. Operator can see an intuitive run activity stream describing exactly what was tested.

@@ -5,7 +5,35 @@ export interface AuthResponse {
     id: number;
     username: string;
     email: string;
+    must_reset_password?: boolean;
+    is_security_admin?: boolean;
   };
+}
+
+export interface SecurityJourneyReport {
+  id: number;
+  title: string;
+  flow_type: "dm" | "video" | "both";
+  status: "draft" | "review" | "final";
+  executive_summary: string;
+  reality_check_answers: Record<string, string>;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SecurityAnalysisRun {
+  id: number;
+  report: number;
+  triggered_by: number | null;
+  triggered_by_username?: string;
+  flow_type: "dm" | "video" | "both";
+  requested_checks: string[];
+  status: "queued" | "running" | "completed" | "failed";
+  run_summary: Record<string, unknown>;
+  failure_reason: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Device {
