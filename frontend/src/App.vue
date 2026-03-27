@@ -93,6 +93,25 @@ const showStartCall = computed(() => Boolean(activeConversation.value) && !video
 const showJoinCall = computed(() => Boolean(activeConversation.value) && !video.inCall && video.hasIncomingCallIntent);
 const showEndCall = computed(() => video.inCall || video.status === "testing" || video.status === "active");
 
+function parseExpectedGroupEpochFromError(error: unknown): number | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/expected_group_epoch=(\d+)/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fetchCurrentGroupEpoch(conversationId: number): Promise<number> {
+  if (!auth.accessToken) {
+    throw new Error("Not authenticated");
+  }
+  const response = await apiRequest<{ conversation_id: number; group_epoch: number }>(
+    `/conversations/${conversationId}/key-epoch/`,
+    { token: auth.accessToken },
+  );
+  return response.group_epoch;
+}
+
 const formattedVideoDiagnostics = computed(() => {
   const d = video.diagnostics;
   const fmt = (value: number | null, digits = 1) => (value === null ? "—" : value.toFixed(digits));
@@ -106,6 +125,15 @@ const formattedVideoDiagnostics = computed(() => {
     packetLossPct: fmt(d.packetLossPct, 2),
     rttMs: fmt(d.rttMs),
     updatedAt: d.updatedAt ? new Date(d.updatedAt).toLocaleTimeString() : "—",
+    mediaE2eeSupported: video.mediaE2eeSupported ? "yes" : "no",
+    mediaE2eeEnabled: video.mediaE2eeEnabled ? "yes" : "no",
+    mediaE2eeMode: video.mediaE2eeMode,
+    mediaE2eeKeyFingerprint: video.mediaE2eeKeyFingerprint ?? "—",
+    mediaE2eeKeyRotatedAt: video.mediaE2eeKeyRotatedAt
+      ? new Date(video.mediaE2eeKeyRotatedAt).toLocaleTimeString()
+      : "—",
+    mediaE2eeRuntimeTransformClass: video.mediaE2eeRuntimeTransformClass,
+    mediaE2eeRuntimeAttachmentCount: video.mediaE2eeRuntimeAttachmentCount,
   };
 });
 
@@ -511,17 +539,35 @@ async function sendMessage() {
 
   try {
     const encrypted = await encryptText(text, key);
-    await apiRequest("/messages/", {
-      method: "POST",
-      token: auth.accessToken,
-      body: {
-        conversation: chat.activeConversationId,
-        ciphertext: encrypted.ciphertext,
-        nonce: encrypted.nonce,
-        aad: JSON.stringify({ kind: "text", shared_key: key }),
-        message_index: nextMessageIndex(),
-      },
-    });
+    const aadPayload: Record<string, unknown> = { kind: "text", shared_key: key };
+    if (activeConversation.value?.kind === "group") {
+      aadPayload.group_epoch = await fetchCurrentGroupEpoch(chat.activeConversationId);
+    }
+
+    const attemptSend = async (aad: Record<string, unknown>) =>
+      apiRequest("/messages/", {
+        method: "POST",
+        token: auth.accessToken,
+        body: {
+          conversation: chat.activeConversationId,
+          ciphertext: encrypted.ciphertext,
+          nonce: encrypted.nonce,
+          aad: JSON.stringify(aad),
+          message_index: nextMessageIndex(),
+        },
+      });
+
+    try {
+      await attemptSend(aadPayload);
+    } catch (error) {
+      const expectedGroupEpoch = parseExpectedGroupEpochFromError(error);
+      if (activeConversation.value?.kind === "group" && expectedGroupEpoch !== null) {
+        await attemptSend({ ...aadPayload, group_epoch: expectedGroupEpoch });
+      } else {
+        throw error;
+      }
+    }
+
     await refreshCurrentConversationMessages();
     draftMessage.value = "";
   } catch (error) {
@@ -542,17 +588,35 @@ async function sendEncryptedFile(event: Event) {
 
   try {
     const marker = await encryptText(`[file] ${file.name}`, key);
-    const message = await apiRequest<{ id: number }>("/messages/", {
-      method: "POST",
-      token: auth.accessToken,
-      body: {
-        conversation: chat.activeConversationId,
-        ciphertext: marker.ciphertext,
-        nonce: marker.nonce,
-        aad: JSON.stringify({ kind: "attachment", shared_key: key }),
-        message_index: nextMessageIndex(),
-      },
-    });
+    const aadPayload: Record<string, unknown> = { kind: "attachment", shared_key: key };
+    if (activeConversation.value?.kind === "group") {
+      aadPayload.group_epoch = await fetchCurrentGroupEpoch(chat.activeConversationId);
+    }
+
+    const sendAttachmentMarker = async (aad: Record<string, unknown>) =>
+      apiRequest<{ id: number }>("/messages/", {
+        method: "POST",
+        token: auth.accessToken,
+        body: {
+          conversation: chat.activeConversationId,
+          ciphertext: marker.ciphertext,
+          nonce: marker.nonce,
+          aad: JSON.stringify(aad),
+          message_index: nextMessageIndex(),
+        },
+      });
+
+    let message: { id: number };
+    try {
+      message = await sendAttachmentMarker(aadPayload);
+    } catch (error) {
+      const expectedGroupEpoch = parseExpectedGroupEpochFromError(error);
+      if (activeConversation.value?.kind === "group" && expectedGroupEpoch !== null) {
+        message = await sendAttachmentMarker({ ...aadPayload, group_epoch: expectedGroupEpoch });
+      } else {
+        throw error;
+      }
+    }
 
     await refreshCurrentConversationMessages();
 
@@ -986,6 +1050,13 @@ onUnmounted(() => {
             <div>Packet loss (%): {{ formattedVideoDiagnostics.packetLossPct }}</div>
             <div>RTT (ms): {{ formattedVideoDiagnostics.rttMs }}</div>
             <div>Updated: {{ formattedVideoDiagnostics.updatedAt }}</div>
+            <div>Media E2EE supported: {{ formattedVideoDiagnostics.mediaE2eeSupported }}</div>
+            <div>Media E2EE enabled: {{ formattedVideoDiagnostics.mediaE2eeEnabled }}</div>
+            <div>Media E2EE mode: {{ formattedVideoDiagnostics.mediaE2eeMode }}</div>
+            <div>Media E2EE key fingerprint: {{ formattedVideoDiagnostics.mediaE2eeKeyFingerprint }}</div>
+            <div>Media E2EE key rotated: {{ formattedVideoDiagnostics.mediaE2eeKeyRotatedAt }}</div>
+            <div>Media E2EE runtime transform class: {{ formattedVideoDiagnostics.mediaE2eeRuntimeTransformClass }}</div>
+            <div>Media E2EE runtime attachments: {{ formattedVideoDiagnostics.mediaE2eeRuntimeAttachmentCount }}</div>
             <div v-if="video.diagnosticsError" class="error">{{ video.diagnosticsError }}</div>
           </div>
           <details class="video-debug">

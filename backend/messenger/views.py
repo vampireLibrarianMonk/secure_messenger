@@ -1,3 +1,5 @@
+import json
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
@@ -36,6 +38,43 @@ from .serializers import (
     WorkspaceMembershipSerializer,
     WorkspaceSerializer,
 )
+
+
+def _current_group_epoch(conversation: Conversation) -> int:
+    if conversation.kind != Conversation.TYPE_GROUP:
+        return 0
+
+    events = SessionEvent.objects.filter(
+        event_type=SessionEvent.EVENT_REVOKE,
+        metadata__category="group_key_epoch",
+        metadata__conversation_id=conversation.id,
+    ).order_by("-created_at")
+
+    if not events.exists():
+        return 1
+
+    epoch = (events.first().metadata or {}).get("epoch", 1)
+    return int(epoch) if isinstance(epoch, int) and epoch >= 1 else 1
+
+
+def _record_group_epoch(actor: User, conversation: Conversation, reason: str, *, epoch: int | None = None) -> int:
+    if conversation.kind != Conversation.TYPE_GROUP:
+        return 0
+
+    if epoch is None:
+        epoch = _current_group_epoch(conversation) + 1
+
+    SessionEvent.objects.create(
+        user=actor,
+        event_type=SessionEvent.EVENT_REVOKE,
+        metadata={
+            "category": "group_key_epoch",
+            "conversation_id": conversation.id,
+            "epoch": epoch,
+            "reason": reason,
+        },
+    )
+    return epoch
 
 
 def _configured_admin_usernames() -> set[str]:
@@ -149,6 +188,76 @@ def _extract_test_lab_artifact_events(user: User) -> list[SessionEvent]:
         if is_admin or event.user_id == user.id:
             events.append(event)
     return events
+
+
+def _validate_run_artifact_schema(run: dict) -> None:
+    required_string_fields = ("run_id", "scenario", "scenario_label", "category", "environment", "intensity", "state", "result")
+    for field in required_string_fields:
+        value = run.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError(f"{field} is required and must be a non-empty string.")
+
+    for field in ("duration_ms", "warnings"):
+        value = run.get(field)
+        if not isinstance(value, int) or value < 0:
+            raise ValidationError(f"{field} must be a non-negative integer.")
+
+    participants = run.get("participants")
+    if not isinstance(participants, list) or not all(isinstance(item, str) for item in participants):
+        raise ValidationError("participants must be a list of strings.")
+
+    events = run.get("events")
+    if not isinstance(events, list):
+        raise ValidationError("events must be a list.")
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValidationError("Each event must be an object.")
+        for key in ("id", "timestamp", "label", "status"):
+            if not isinstance(event.get(key), str):
+                raise ValidationError(f"Event field '{key}' must be a string.")
+
+    logs = run.get("logs")
+    if not isinstance(logs, list):
+        raise ValidationError("logs must be a list.")
+    for line in logs:
+        if not isinstance(line, dict):
+            raise ValidationError("Each log line must be an object.")
+        if not isinstance(line.get("timestamp"), str) or not isinstance(line.get("text"), str):
+            raise ValidationError("Log lines require string timestamp/text fields.")
+        if line.get("level") not in {"INFO", "WARN", "ERROR"}:
+            raise ValidationError("Log line level must be one of INFO/WARN/ERROR.")
+
+    evidence = run.get("evidence")
+    if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
+        raise ValidationError("evidence must be a list of strings.")
+
+    diagnostics = run.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        raise ValidationError("diagnostics must be an object.")
+
+    metadata = run.get("metadata_observability")
+    if not isinstance(metadata, dict):
+        raise ValidationError("metadata_observability must be an object.")
+    for field in ("correlation_id", "session_id", "room_id", "transport_path", "auth_state"):
+        if not isinstance(metadata.get(field), str):
+            raise ValidationError(f"metadata_observability.{field} must be a string.")
+
+    category = str(run.get("category", "")).strip()
+    result = str(run.get("result", "")).strip()
+    diagnostics_video = diagnostics.get("video") if isinstance(diagnostics, dict) else None
+
+    if category in {"video", "full"} and result == "PASS — E2EE VERIFIED":
+        if not isinstance(diagnostics_video, dict):
+            raise ValidationError("diagnostics.video must be an object for video/full E2EE verified artifacts.")
+
+        evidence_source = diagnostics_video.get("app_layer_evidence_source")
+        if evidence_source != "runtime_verified":
+            raise ValidationError(
+                "video/full E2EE verified artifacts require diagnostics.video.app_layer_evidence_source=runtime_verified."
+            )
+
+        if diagnostics_video.get("transport_vs_app_layer") == "transport_only":
+            raise ValidationError("video/full E2EE verified artifacts cannot declare transport_only classification.")
 
 
 class RegisterView(APIView):
@@ -295,6 +404,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
             ignore_conflicts=True,
         )
 
+        if conversation.kind == Conversation.TYPE_GROUP:
+            _record_group_epoch(self.request.user, conversation, "group_created", epoch=1)
+
     def destroy(self, request, *args, **kwargs):
         conversation = self.get_object()
         if conversation.created_by_id != request.user.id:
@@ -313,7 +425,19 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         user_id = request.data.get("user")
         member = ConversationMember.objects.create(conversation=conversation, user_id=user_id)
+        if conversation.kind == Conversation.TYPE_GROUP:
+            _record_group_epoch(request.user, conversation, "member_added")
         return Response(ConversationMemberSerializer(member).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="key-epoch")
+    def key_epoch(self, request, pk=None):
+        conversation = self.get_object()
+        return Response(
+            {
+                "conversation_id": conversation.id,
+                "group_epoch": _current_group_epoch(conversation),
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="leave")
     def leave(self, request, pk=None):
@@ -321,6 +445,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
         deleted, _ = ConversationMember.objects.filter(conversation=conversation, user=request.user).delete()
         if deleted == 0:
             return Response({"detail": "Not a member."}, status=status.HTTP_400_BAD_REQUEST)
+        if conversation.kind == Conversation.TYPE_GROUP:
+            _record_group_epoch(request.user, conversation, "member_left")
         return Response({"detail": "Left conversation."}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="nuke")
@@ -357,6 +483,30 @@ class MessageEnvelopeViewSet(viewsets.ModelViewSet):
         if not ConversationMember.objects.filter(conversation=conversation, user=request.user).exists():
             return Response({"detail": "Not a member of this conversation."}, status=status.HTTP_403_FORBIDDEN)
 
+        if conversation.kind == Conversation.TYPE_GROUP:
+            aad_raw = serializer.validated_data.get("aad") or "{}"
+            try:
+                aad = json.loads(aad_raw)
+            except json.JSONDecodeError:
+                return Response({"aad": ["aad must be valid JSON for group messages."]}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not isinstance(aad, dict):
+                return Response({"aad": ["aad JSON must be an object for group messages."]}, status=status.HTTP_400_BAD_REQUEST)
+
+            group_epoch = aad.get("group_epoch")
+            if not isinstance(group_epoch, int):
+                return Response({"aad": ["group messages require integer aad.group_epoch."]}, status=status.HTTP_400_BAD_REQUEST)
+
+            current_epoch = _current_group_epoch(conversation)
+            if group_epoch != current_epoch:
+                return Response(
+                    {
+                        "detail": f"Stale group epoch; rekey required. expected_group_epoch={current_epoch}",
+                        "expected_group_epoch": current_epoch,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         message = serializer.save(sender=request.user)
         payload = MessageEnvelopeSerializer(message).data
         channel_layer = get_channel_layer()
@@ -376,7 +526,19 @@ class AttachmentViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin, mixi
         return Attachment.objects.filter(message__conversation__members__user=self.request.user).distinct().order_by("-created_at")
 
     def perform_create(self, serializer):
+        message = serializer.validated_data["message"]
+        if not ConversationMember.objects.filter(conversation=message.conversation, user=self.request.user).exists():
+            raise PermissionDenied("Not a member of this conversation.")
+
         blob = self.request.FILES["blob"]
+        max_size = 25 * 1024 * 1024
+        if blob.size > max_size:
+            raise ValidationError("Attachment too large. Maximum size is 25MB.")
+
+        mime_type = serializer.validated_data.get("mime_type", "")
+        if not isinstance(mime_type, str) or not mime_type.strip() or len(mime_type) > 128:
+            raise ValidationError("mime_type must be a non-empty string up to 128 characters.")
+
         serializer.save(uploaded_by=self.request.user, size=blob.size)
 
 
@@ -500,6 +662,8 @@ class TestLabRunArtifactView(APIView):
         result = str(run.get("result", "")).strip()
         if not run_id or not scenario or not result:
             raise ValidationError("run_id, scenario, and result are required.")
+
+        _validate_run_artifact_schema(run)
 
         if _contains_prohibited_output(run):
             raise ValidationError("Artifact payload contains prohibited plaintext/secret fields.")

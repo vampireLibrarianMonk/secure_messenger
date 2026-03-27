@@ -16,6 +16,10 @@ export interface EvidenceSnapshot {
   dmRecipientDecryptConfirmed: boolean;
   videoTransportProtected: boolean;
   videoAppLayerE2eeConfirmed: boolean;
+  videoAppLayerEvidenceSource:
+    | "runtime_verified"
+    | "runtime_experimental_obfuscation"
+    | "synthetic_or_unverified";
   documentClientBlobEncryptionConfirmed: boolean;
   documentWrappedKeyTransferConfirmed: boolean;
   documentRecipientDecryptConfirmed: boolean;
@@ -48,6 +52,8 @@ export function defaultResultSeed(category: string): ResultSummarySeed {
 export function evaluateResultFromEvidence(snapshot: EvidenceSnapshot): ResultSummarySeed {
   const evidence: string[] = [];
   const envUnknown = snapshot.environment.toLowerCase().includes("unknown/unverified");
+  const videoAppLayerCryptographicallyVerified =
+    snapshot.videoAppLayerE2eeConfirmed && snapshot.videoAppLayerEvidenceSource === "runtime_verified";
 
   if (snapshot.hadFailure) {
     return {
@@ -109,10 +115,18 @@ export function evaluateResultFromEvidence(snapshot: EvidenceSnapshot): ResultSu
     snapshot.documentClientBlobEncryptionConfirmed &&
     snapshot.documentWrappedKeyTransferConfirmed &&
     snapshot.documentRecipientDecryptConfirmed &&
+    (snapshot.scenario !== "full" || videoAppLayerCryptographicallyVerified) &&
     (snapshot.scenario !== "group" || (snapshot.groupMembershipRekeyConfirmed && snapshot.groupPostRemovalAccessDeniedConfirmed));
 
-  if (snapshot.scenario === "video" && !snapshot.videoAppLayerE2eeConfirmed && snapshot.videoTransportProtected) {
+  if (
+    snapshot.scenario === "video" &&
+    (!snapshot.videoAppLayerE2eeConfirmed || snapshot.videoAppLayerEvidenceSource !== "runtime_verified") &&
+    snapshot.videoTransportProtected
+  ) {
     evidence.push("Video transport protection confirmed (DTLS/SRTP equivalent synthetic path). App-layer media E2EE not confirmed.");
+    if (snapshot.videoAppLayerEvidenceSource === "runtime_experimental_obfuscation") {
+      evidence.push("Runtime media transform detected but classified as experimental obfuscation (non-cryptographic evidence). ");
+    }
     return {
       result: "PASS — TRANSPORT ONLY",
       explanation:
@@ -124,12 +138,20 @@ export function evaluateResultFromEvidence(snapshot: EvidenceSnapshot): ResultSu
   if (snapshot.videoTransportProtected) {
     evidence.push("Video transport protection confirmed.");
   }
-  if (snapshot.videoAppLayerE2eeConfirmed) {
+  if (videoAppLayerCryptographicallyVerified) {
     evidence.push("Video app-layer E2EE check confirmed.");
+  } else if (snapshot.scenario === "full" && snapshot.videoAppLayerEvidenceSource === "runtime_experimental_obfuscation") {
+    evidence.push("Full-suite video branch reported runtime experimental obfuscation, which is not accepted as cryptographic E2EE evidence.");
+  } else if (snapshot.scenario === "video") {
+    evidence.push("Video app-layer E2EE evidence source is synthetic or unverified.");
   }
 
   if (snapshot.scenario === "video") {
-    if (snapshot.videoTransportProtected && snapshot.videoAppLayerE2eeConfirmed) {
+    if (
+      snapshot.videoTransportProtected &&
+      snapshot.videoAppLayerE2eeConfirmed &&
+      snapshot.videoAppLayerEvidenceSource === "runtime_verified"
+    ) {
       return {
         result: "PASS — E2EE VERIFIED",
         explanation: "Video scenario validated both transport and app-layer media encryption evidence.",

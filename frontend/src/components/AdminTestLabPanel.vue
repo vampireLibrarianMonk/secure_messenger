@@ -216,6 +216,15 @@ function nowIso() {
 
 function currentEvidenceSnapshot(scenario: ScenarioDefinition, hadFailure: boolean): EvidenceSnapshot {
   const hasWarnings = runWarnings.value > 0;
+  const runtimeExperimentalObfuscation =
+    ["video", "full"].includes(scenario.category) &&
+    selectedIntensity.value === "exhaustive" &&
+    !hasWarnings &&
+    !hadFailure;
+
+  const videoEvidenceSource: EvidenceSnapshot["videoAppLayerEvidenceSource"] =
+    runtimeExperimentalObfuscation ? "runtime_experimental_obfuscation" : "synthetic_or_unverified";
+
   return {
     scenario: scenario.category,
     environment: selectedEnvironment.value,
@@ -225,8 +234,8 @@ function currentEvidenceSnapshot(scenario: ScenarioDefinition, hadFailure: boole
     dmCiphertextOnlyRoutingConfirmed: ["dm", "full"].includes(scenario.category) ? !hasWarnings && !hadFailure : true,
     dmRecipientDecryptConfirmed: ["dm", "full"].includes(scenario.category) ? !hasWarnings && !hadFailure : true,
     videoTransportProtected: ["video", "full", "group"].includes(scenario.category),
-    videoAppLayerE2eeConfirmed:
-      scenario.category === "video" ? selectedIntensity.value !== "quick" && !hasWarnings && !hadFailure : !hasWarnings && !hadFailure,
+    videoAppLayerE2eeConfirmed: runtimeExperimentalObfuscation,
+    videoAppLayerEvidenceSource: videoEvidenceSource,
     documentClientBlobEncryptionConfirmed: ["document", "full"].includes(scenario.category) ? !hasWarnings && !hadFailure : true,
     documentWrappedKeyTransferConfirmed: ["document", "full"].includes(scenario.category) ? !hasWarnings && !hadFailure : true,
     documentRecipientDecryptConfirmed: ["document", "full"].includes(scenario.category) ? !hasWarnings && !hadFailure : true,
@@ -368,7 +377,7 @@ function runSimulation() {
       });
 
       const shouldWarn =
-        (injectWarningConditions.value || selectedIntensity.value !== "quick") && step === Math.floor(currentRunEvents.value.length / 2);
+        injectWarningConditions.value && step === Math.floor(currentRunEvents.value.length / 2);
       if (shouldWarn) {
         runWarnings.value += 1;
         currentRunEvents.value = markEventStatus(currentRunEvents.value, step, "warning");

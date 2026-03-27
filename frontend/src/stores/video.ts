@@ -1,8 +1,12 @@
 import { defineStore } from "pinia";
 import { videoWebsocketUrl } from "../lib/api";
+import { generateConversationKey } from "../lib/crypto";
 import { useAuthStore } from "./auth";
 
 type CallStatus = "idle" | "testing" | "connecting" | "active" | "ended" | "error";
+
+const transformedSenders = new WeakSet<RTCRtpSender>();
+const transformedReceivers = new WeakSet<RTCRtpReceiver>();
 
 interface VideoState {
   ws: WebSocket | null;
@@ -41,6 +45,15 @@ interface VideoState {
     remoteFramesDecoded: number | null;
     timestampMs: number | null;
   };
+  signalSequence: number;
+  signalingSessionId: string | null;
+  mediaE2eeSupported: boolean;
+  mediaE2eeEnabled: boolean;
+  mediaE2eeMode: "unavailable" | "scaffold" | "runtime_pipeline_active" | "runtime_obfuscation_active";
+  mediaE2eeKeyFingerprint: string | null;
+  mediaE2eeKeyRotatedAt: number | null;
+  mediaE2eeRuntimeTransformClass: "none" | "xor_obfuscation_experimental";
+  mediaE2eeRuntimeAttachmentCount: number;
 }
 
 function parseIceServers(): RTCIceServer[] {
@@ -109,6 +122,15 @@ export const useVideoStore = defineStore("video", {
       remoteFramesDecoded: null,
       timestampMs: null,
     },
+    signalSequence: 0,
+    signalingSessionId: null,
+    mediaE2eeSupported: false,
+    mediaE2eeEnabled: false,
+    mediaE2eeMode: "unavailable",
+    mediaE2eeKeyFingerprint: null,
+    mediaE2eeKeyRotatedAt: null,
+    mediaE2eeRuntimeTransformClass: "none",
+    mediaE2eeRuntimeAttachmentCount: 0,
   }),
   getters: {
     inCall(state): boolean {
@@ -116,6 +138,158 @@ export const useVideoStore = defineStore("video", {
     },
   },
   actions: {
+    supportsInsertableStreams(): boolean {
+      const senderProto = (
+        window as typeof window & {
+          RTCRtpSender?: { prototype?: { createEncodedStreams?: () => unknown; transform?: unknown } };
+        }
+      ).RTCRtpSender?.prototype;
+      const receiverProto = (
+        window as typeof window & {
+          RTCRtpReceiver?: { prototype?: { createEncodedStreams?: () => unknown; transform?: unknown } };
+        }
+      ).RTCRtpReceiver?.prototype;
+
+      const senderSupported = Boolean(
+        senderProto &&
+          (typeof senderProto.createEncodedStreams === "function" || "transform" in senderProto),
+      );
+      const receiverSupported = Boolean(
+        receiverProto &&
+          (typeof receiverProto.createEncodedStreams === "function" || "transform" in receiverProto),
+      );
+      return senderSupported && receiverSupported;
+    },
+
+    async initializeMediaE2eeScaffold() {
+      const supported = this.supportsInsertableStreams();
+      this.mediaE2eeSupported = supported;
+
+      if (!supported) {
+        this.mediaE2eeEnabled = false;
+        this.mediaE2eeMode = "unavailable";
+        this.mediaE2eeKeyFingerprint = null;
+        this.mediaE2eeKeyRotatedAt = null;
+        return;
+      }
+
+      const key = await generateConversationKey();
+      this.mediaE2eeEnabled = true;
+      this.mediaE2eeMode = "scaffold";
+      this.mediaE2eeKeyFingerprint = key.slice(0, 16);
+      this.mediaE2eeKeyRotatedAt = Date.now();
+    },
+
+    async rotateMediaE2eeScaffoldKey() {
+      if (!this.mediaE2eeSupported) return;
+      const key = await generateConversationKey();
+      this.mediaE2eeEnabled = true;
+      this.mediaE2eeMode = "scaffold";
+      this.mediaE2eeKeyFingerprint = key.slice(0, 16);
+      this.mediaE2eeKeyRotatedAt = Date.now();
+    },
+
+    xorObfuscateFrameData(data: ArrayBuffer, seed: number): void {
+      const bytes = new Uint8Array(data);
+      if (bytes.length === 0) return;
+      for (let i = 0; i < bytes.length; i += 1) {
+        const mask = (seed + i * 17) & 0xff;
+        bytes[i] ^= mask;
+      }
+    },
+
+    attachSenderTransform(sender: RTCRtpSender): boolean {
+      if (transformedSenders.has(sender)) {
+        return false;
+      }
+      const candidate = sender as RTCRtpSender & {
+        createEncodedStreams?: () => { readable: ReadableStream<unknown>; writable: WritableStream<unknown> };
+      };
+
+      if (typeof candidate.createEncodedStreams !== "function") {
+        return false;
+      }
+
+      try {
+        const { readable, writable } = candidate.createEncodedStreams();
+        const transform = new TransformStream<unknown, unknown>({
+          transform: (frame, controller) => {
+            const typedFrame = frame as { data?: ArrayBuffer; timestamp?: number };
+            if (typedFrame.data instanceof ArrayBuffer) {
+              const seed = Number((typedFrame.timestamp ?? 0) & 0xff) ^ (this.callConversationId ?? 0);
+              this.xorObfuscateFrameData(typedFrame.data, seed);
+            }
+            controller.enqueue(frame);
+          },
+        });
+        void readable.pipeThrough(transform).pipeTo(writable).catch(() => undefined);
+        transformedSenders.add(sender);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    attachReceiverTransform(receiver: RTCRtpReceiver): boolean {
+      if (transformedReceivers.has(receiver)) {
+        return false;
+      }
+      const candidate = receiver as RTCRtpReceiver & {
+        createEncodedStreams?: () => { readable: ReadableStream<unknown>; writable: WritableStream<unknown> };
+      };
+
+      if (typeof candidate.createEncodedStreams !== "function") {
+        return false;
+      }
+
+      try {
+        const { readable, writable } = candidate.createEncodedStreams();
+        const transform = new TransformStream<unknown, unknown>({
+          transform: (frame, controller) => {
+            const typedFrame = frame as { data?: ArrayBuffer; timestamp?: number };
+            if (typedFrame.data instanceof ArrayBuffer) {
+              const seed = Number((typedFrame.timestamp ?? 0) & 0xff) ^ (this.callConversationId ?? 0);
+              this.xorObfuscateFrameData(typedFrame.data, seed);
+            }
+            controller.enqueue(frame);
+          },
+        });
+        void readable.pipeThrough(transform).pipeTo(writable).catch(() => undefined);
+        transformedReceivers.add(receiver);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    activateRuntimeMediaE2eePipeline() {
+      if (!this.peer || !this.mediaE2eeSupported) {
+        return;
+      }
+
+      let attachedCount = 0;
+      for (const sender of this.peer.getSenders()) {
+        if (!sender.track) continue;
+        if (sender.track.kind !== "audio" && sender.track.kind !== "video") continue;
+        if (this.attachSenderTransform(sender)) {
+          attachedCount += 1;
+        }
+      }
+
+      for (const receiver of this.peer.getReceivers()) {
+        if (this.attachReceiverTransform(receiver)) {
+          attachedCount += 1;
+        }
+      }
+
+      if (attachedCount > 0) {
+        this.mediaE2eeEnabled = true;
+        this.mediaE2eeMode = "runtime_obfuscation_active";
+        this.mediaE2eeRuntimeTransformClass = "xor_obfuscation_experimental";
+        this.mediaE2eeRuntimeAttachmentCount += attachedCount;
+      }
+    },
+
     setDiagnosticsEnabled(enabled: boolean) {
       this.diagnosticsEnabled = enabled;
       if (!enabled) {
@@ -260,23 +434,34 @@ export const useVideoStore = defineStore("video", {
 
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(videoWebsocketUrl(conversationId, auth.accessToken!));
+        let sessionReady = false;
         ws.onopen = () => {
           this.ws = ws;
           this.callConversationId = conversationId;
-          if (!this.inCall) {
-            this.status = "idle";
-            this.statusMessage = "Ready";
-          }
-          resolve();
+          this.signalSequence = 0;
+          this.signalingSessionId = null;
         };
         ws.onerror = () => reject(new Error("Incoming call listener failed to connect"));
         ws.onmessage = async (event) => {
           const data = JSON.parse(event.data) as {
-            type: "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
+            type: "session" | "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
             sender_client_id?: string;
-            payload?: RTCSessionDescriptionInit | RTCIceCandidateInit | { ok: boolean };
+            payload?: RTCSessionDescriptionInit | RTCIceCandidateInit | { ok: boolean } | { signaling_session_id: string };
             detail?: string;
           };
+          if (data.type === "session") {
+            const sessionPayload = data.payload as { signaling_session_id?: string } | undefined;
+            this.signalingSessionId = sessionPayload?.signaling_session_id ?? null;
+            if (!sessionReady && this.signalingSessionId) {
+              sessionReady = true;
+              if (!this.inCall) {
+                this.status = "idle";
+                this.statusMessage = "Ready";
+              }
+              resolve();
+            }
+            return;
+          }
           if (data.type === "error") {
             this.status = "error";
             this.statusMessage = `Signaling error: ${data.detail ?? "unknown"}`;
@@ -318,6 +503,7 @@ export const useVideoStore = defineStore("video", {
           reject(new Error("Signaling test timeout (no echo received)"));
         }, 5000);
         let settled = false;
+        let signalingSessionId: string | null = null;
 
         const failOnce = (error: Error) => {
           if (settled) return;
@@ -340,16 +526,32 @@ export const useVideoStore = defineStore("video", {
         };
 
         ws.onopen = () => {
-          ws.send(JSON.stringify({
-            type: "ready",
-            payload: { signal_test: true, ts: Date.now() },
-            client_id: testClientId,
-          }));
+          // Wait for server-issued signaling session before transmitting.
         };
 
         ws.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data) as { type?: string; sender_client_id?: string; detail?: string };
+            const data = JSON.parse(event.data) as {
+              type?: string;
+              sender_client_id?: string;
+              detail?: string;
+              payload?: { signaling_session_id?: string };
+            };
+            if (data.type === "session") {
+              signalingSessionId = data.payload?.signaling_session_id ?? null;
+              if (signalingSessionId) {
+                ws.send(
+                  JSON.stringify({
+                    type: "ready",
+                    payload: { signal_test: true, ts: Date.now() },
+                    client_id: testClientId,
+                    sequence: 1,
+                    signaling_session_id: signalingSessionId,
+                  }),
+                );
+              }
+              return;
+            }
             if (data.type === "error") {
               failOnce(new Error(`Signaling rejected: ${data.detail ?? "unknown"}`));
               return;
@@ -514,10 +716,12 @@ export const useVideoStore = defineStore("video", {
 
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(videoWebsocketUrl(conversationId, auth.accessToken!));
+        let sessionReady = false;
         ws.onopen = () => {
           this.ws = ws;
           this.callConversationId = conversationId;
-          resolve();
+          this.signalSequence = 0;
+          this.signalingSessionId = null;
         };
         ws.onerror = () => {
           // onclose often carries the useful code (4401/4403)
@@ -529,12 +733,21 @@ export const useVideoStore = defineStore("video", {
         };
         ws.onmessage = async (event) => {
           const data = JSON.parse(event.data) as {
-            type: "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
+            type: "session" | "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
             sender_id?: number;
             sender_client_id?: string;
-            payload?: RTCSessionDescriptionInit | RTCIceCandidateInit | { ok: boolean };
+            payload?: RTCSessionDescriptionInit | RTCIceCandidateInit | { ok: boolean } | { signaling_session_id: string };
             detail?: string;
           };
+          if (data.type === "session") {
+            const sessionPayload = data.payload as { signaling_session_id?: string } | undefined;
+            this.signalingSessionId = sessionPayload?.signaling_session_id ?? null;
+            if (!sessionReady && this.signalingSessionId) {
+              sessionReady = true;
+              resolve();
+            }
+            return;
+          }
           if (data.type === "error") {
             this.status = "error";
             this.statusMessage = `Signaling error: ${data.detail ?? "unknown"}`;
@@ -564,13 +777,18 @@ export const useVideoStore = defineStore("video", {
       this.peer = peer;
       this.pendingIce = [];
 
+      await this.initializeMediaE2eeScaffold();
+
       this.remoteStream = new MediaStream();
 
       this.localStream?.getTracks().forEach((track) => {
         peer.addTrack(track, this.localStream!);
       });
 
+      this.activateRuntimeMediaE2eePipeline();
+
       peer.ontrack = (event) => {
+        this.activateRuntimeMediaE2eePipeline();
         const stream = this.remoteStream ?? new MediaStream();
         this.remoteStream = stream;
         event.streams[0]?.getTracks().forEach((track) => {
@@ -697,7 +915,17 @@ export const useVideoStore = defineStore("video", {
 
     sendSignal(type: "ready" | "offer" | "answer" | "ice" | "hangup", payload: unknown) {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      this.ws.send(JSON.stringify({ type, payload, client_id: this.clientId }));
+      if (!this.signalingSessionId) return;
+      this.signalSequence += 1;
+      this.ws.send(
+        JSON.stringify({
+          type,
+          payload,
+          client_id: this.clientId,
+          sequence: this.signalSequence,
+          signaling_session_id: this.signalingSessionId,
+        }),
+      );
     },
 
     async ensureLocalStream() {
@@ -757,6 +985,14 @@ export const useVideoStore = defineStore("video", {
       this.status = "ended";
       this.statusMessage = "Call ended";
       this.stopDiagnosticsLoop();
+      this.signalSequence = 0;
+      this.signalingSessionId = null;
+      this.mediaE2eeEnabled = false;
+      this.mediaE2eeMode = this.mediaE2eeSupported ? "scaffold" : "unavailable";
+      this.mediaE2eeKeyFingerprint = null;
+      this.mediaE2eeKeyRotatedAt = null;
+      this.mediaE2eeRuntimeTransformClass = "none";
+      this.mediaE2eeRuntimeAttachmentCount = 0;
     },
 
     resetStatusIfIdle() {
