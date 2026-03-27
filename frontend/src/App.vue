@@ -900,9 +900,6 @@ onUnmounted(() => {
       <input v-model="username" placeholder="Username" />
       <input v-model="password" type="password" placeholder="Password" @keydown.enter="submitAuth" />
       <button @click="submitAuth">Login</button>
-      <p class="muted">User registration is CLI-only for this deployment.</p>
-      <pre class="bash-log-scroll"><code>docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123!')"
-docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123!')"</code></pre>
       <p v-if="authError" class="error">{{ authError }}</p>
     </section>
 

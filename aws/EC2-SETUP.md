@@ -304,6 +304,21 @@ docker run -d \
   caddy:2
 ```
 
+Before opening the website, verify Caddy and app upstreams are healthy:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+docker logs --tail 80 sm-caddy
+curl -I https://secure-messenger.my-deployment.com/
+curl -i https://secure-messenger.my-deployment.com/api/
+```
+
+Expected:
+
+- Caddy container is `Up`
+- `/` returns `200`
+- `/api/` returns app response (often `401` when unauthenticated)
+
 Then access only:
 
 - `https://secure-messenger.my-deployment.com`
