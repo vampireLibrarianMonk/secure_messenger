@@ -109,6 +109,73 @@ class MessagingTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("aad", response.data)
 
+    def test_send_ciphertext_message_preserves_shared_key_aad_for_receiver(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.other)
+
+        shared_key = b64_bytes(32, b"k")
+        response = self.client.post(
+            "/api/messages/",
+            {
+                "conversation": conversation.id,
+                "ciphertext": "ZmFrZQ==",
+                "nonce": b64_bytes(12),
+                "aad": f'{{"kind":"text","shared_key":"{shared_key}"}}',
+                "message_index": 4,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertIn(shared_key, response.data["aad"])
+
+    def test_two_temporary_users_can_fetch_distinct_shared_keys_for_multiple_messages(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.other)
+
+        first_key = b64_bytes(32, b"k")
+        second_key = b64_bytes(32, b"z")
+
+        first = self.client.post(
+            "/api/messages/",
+            {
+                "conversation": conversation.id,
+                "ciphertext": "ZmFrZTE=",
+                "nonce": b64_bytes(12, b"n"),
+                "aad": f'{{"kind":"text","shared_key":"{first_key}"}}',
+                "message_index": 5,
+            },
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201)
+
+        second = self.client.post(
+            "/api/messages/",
+            {
+                "conversation": conversation.id,
+                "ciphertext": "ZmFrZTI=",
+                "nonce": b64_bytes(12, b"m"),
+                "aad": f'{{"kind":"text","shared_key":"{second_key}"}}',
+                "message_index": 6,
+            },
+            format="json",
+        )
+        self.assertEqual(second.status_code, 201)
+
+        receiver_client = APIClient()
+        receiver_token = receiver_client.post(
+            "/api/auth/login/", {"username": "bob", "password": "testpass123"}, format="json"
+        ).data["access"]
+        receiver_client.credentials(HTTP_AUTHORIZATION=f"Bearer {receiver_token}")
+
+        fetched = receiver_client.get(f"/api/messages/?conversation={conversation.id}")
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(len(fetched.data), 2)
+        self.assertIn(first_key, fetched.data[0]["aad"])
+        self.assertIn(second_key, fetched.data[1]["aad"])
+
 
 class AttachmentSecurityTests(TestCase):
     def setUp(self):
@@ -181,6 +248,30 @@ class AttachmentSecurityTests(TestCase):
 
         response = self._post_attachment(message=str(isolated_message.id))
         self.assertEqual(response.status_code, 403)
+
+    def test_attachment_download_requires_conversation_membership(self):
+        created = self._post_attachment()
+        self.assertEqual(created.status_code, 201)
+        attachment_id = created.data["id"]
+
+        outsider_client = APIClient()
+        outsider_token = outsider_client.post(
+            "/api/auth/login/", {"username": "charlie", "password": "testpass123"}, format="json"
+        ).data["access"]
+        outsider_client.credentials(HTTP_AUTHORIZATION=f"Bearer {outsider_token}")
+
+        response = outsider_client.get(f"/api/attachments/{attachment_id}/download/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_attachment_download_returns_encrypted_blob_for_member(self):
+        created = self._post_attachment()
+        self.assertEqual(created.status_code, 201)
+        attachment_id = created.data["id"]
+
+        response = self.client.get(f"/api/attachments/{attachment_id}/download/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/octet-stream")
+        self.assertGreater(int(response["Content-Length"]), 0)
 
 
 class TestLabArtifactSecurityTests(TestCase):

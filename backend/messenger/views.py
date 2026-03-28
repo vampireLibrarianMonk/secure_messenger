@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
@@ -540,6 +542,24 @@ class AttachmentViewSet(mixins.CreateModelMixin, mixins.RetrieveModelMixin, mixi
             raise ValidationError("mime_type must be a non-empty string up to 128 characters.")
 
         serializer.save(uploaded_by=self.request.user, size=blob.size)
+
+    @action(detail=True, methods=["get"], url_path="download")
+    def download(self, request, pk=None):
+        attachment = self.get_object()
+        if not ConversationMember.objects.filter(conversation=attachment.message.conversation, user=request.user).exists():
+            raise PermissionDenied("Not a member of this conversation.")
+
+        if not attachment.blob:
+            raise Http404("Attachment blob missing.")
+
+        file_path = Path(attachment.blob.path)
+        if not file_path.exists() or not file_path.is_file():
+            raise Http404("Attachment file missing.")
+
+        response = FileResponse(file_path.open("rb"), content_type="application/octet-stream")
+        response["Content-Length"] = str(file_path.stat().st_size)
+        response["Content-Disposition"] = f'attachment; filename="{file_path.name}"'
+        return response
 
 
 class SessionEventViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):

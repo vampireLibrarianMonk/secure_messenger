@@ -1,6 +1,6 @@
-# Secure Messenger on AWS EC2
+# Secure Chat on AWS EC2
 
-This guide walks through deploying Secure Messenger on a single EC2 instance using Docker.
+This guide walks through deploying Secure Chat on a single EC2 instance using Docker.
 
 ## Critical browser security requirement
 
@@ -260,18 +260,13 @@ secure-chat.my-deployment.com {
 
   reverse_proxy @api secure-chat-backend:8000
 
-  handle_path /media/* {
-    root * /srv
-    file_server
-  }
-
   reverse_proxy secure-chat-frontend:80
 }
 ```
 
 This Caddy setup assumes Caddy runs on the same Docker network as backend/frontend (`secure-chat-net`).
 
-Why `handle_path /media/*`? In this deployment, backend commonly runs with `DJANGO_DEBUG=0`, and Django does not serve media URLs by default in that mode. Serving `/media/*` from the shared Docker volume avoids attachment 404s.
+Attachments should now be downloaded through the authenticated backend endpoint `/api/attachments/<id>/download/` rather than directly from public `/media/*` routes.
 
 Command form (recommended) to update the file directly on EC2:
 
@@ -281,11 +276,6 @@ secure-chat.my-deployment.com {
   @api path /api/* /ws/*
 
   reverse_proxy @api secure-chat-backend:8000
-
-  handle_path /media/* {
-    root * /srv
-    file_server
-  }
 
   reverse_proxy secure-chat-frontend:80
 }
@@ -305,9 +295,38 @@ docker run -d \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
   -v caddy_data:/data \
   -v caddy_config:/config \
-  -v sm_media:/srv:ro \
   caddy:2
 ```
+
+### 7b) Caddy update command for the secure attachment change
+
+If you are updating an existing EC2 deployment, replace the old Caddy config and restart Caddy with:
+
+```bash
+cat > Caddyfile <<'EOF'
+secure-chat.my-deployment.com {
+  @api path /api/* /ws/*
+
+  reverse_proxy @api secure-chat-backend:8000
+
+  reverse_proxy secure-chat-frontend:80
+}
+EOF
+
+docker rm -f sm-caddy 2>/dev/null || true
+
+docker run -d \
+  --name sm-caddy \
+  --network secure-chat-net \
+  --restart unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
+  -v caddy_data:/data \
+  -v caddy_config:/config \
+  caddy:2
+```
+
+This removes the old public `/media/*` handling and keeps attachment downloads behind the authenticated backend API.
 
 Before opening the website, verify Caddy and app upstreams are healthy:
 
@@ -366,14 +385,11 @@ Expected:
 Before user testing, verify these specifics:
 
 ```bash
-# backend must mount the shared media volume used by Caddy
+# backend must mount the shared media volume used for authenticated attachment downloads
 docker inspect secure-chat-backend --format '{{json .Mounts}}'
-
-# Caddy must mount the same volume read-only for /media serving
-docker inspect sm-caddy --format '{{json .Mounts}}'
 ```
 
-Expected: backend has `sm_media -> /app/media` and Caddy has `sm_media -> /srv`.
+Expected: backend has `sm_media -> /app/media`.
 
 Then in the app UI:
 
@@ -392,8 +408,8 @@ If signaling test passes but call does not connect, that usually means NAT trave
 - **`crypto.randomUUID is not a function`:** you're likely on insecure HTTP origin; switch to HTTPS domain access.
 - **Caddy 502 `dial tcp 127.0.0.1:8080 connect: connection refused`:** Caddy is in a container; use Docker service names (`secure-chat-frontend:80`, `secure-chat-backend:8000`) and attach Caddy to `secure-chat-net`.
 - **Let's Encrypt `Timeout during connect (likely firewall problem)`:** open EC2 security group inbound TCP `80` and `443`.
-- **Attachment download `404` with files present in `/app/media/attachments`:** Caddy must serve `/media/*` from `sm_media` (mounted read-only to `/srv`), or Django must be explicitly configured to serve media in production.
-- **Attachment upload appears but receiver gets 404:** ensure backend is started with `-v sm_media:/app/media` and Caddy with `-v sm_media:/srv:ro` (same volume name).
+- **Attachment download fails even though upload succeeded:** authenticated downloads now flow through `/api/attachments/<id>/download/`; ensure backend is running with `-v sm_media:/app/media` and the frontend has been rebuilt with the latest download logic.
+- **Attachment upload appears but receiver gets download error:** confirm the backend container has the `sm_media` volume mounted at `/app/media`, and verify the requesting user is still a conversation member.
 - **Attachment uploaded before media volume was mounted:** old files may be unrecoverable after container restart; upload a new file after `sm_media` is in place.
 - **Caller can start but receiver cannot complete call join:** verify `VITE_WS_BASE=wss://secure-chat.my-deployment.com`, run in-app **Signaling Test**, and add TURN servers via `VITE_ICE_SERVERS` for cross-network NAT traversal.
 - **Calls still fail after config changes:** frontend env is baked at image build time; rebuild frontend with `--no-cache` and restart the frontend container.
@@ -433,7 +449,6 @@ Use this exact sequence after deployment changes:
 ```bash
 # 1) Verify expected container mounts
 docker inspect secure-chat-backend --format '{{json .Mounts}}'
-docker inspect sm-caddy --format '{{json .Mounts}}'
 
 # 2) Verify HTTPS/API health before UI tests
 curl -I https://secure-chat.my-deployment.com/
@@ -466,7 +481,7 @@ Use this section to fully reset the EC2 deployment and rebuild from scratch.
 ### Stop and remove running containers
 
 ```bash
-docker rm -f secure-chat-frontend secure-chat-backend secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true
+docker rm -f secure-chat-frontend secure-chat-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true
 ```
 
 ### Remove app images
@@ -496,7 +511,7 @@ docker builder prune -af
 ### Full one-shot reset command
 
 ```bash
-docker rm -f secure-chat-frontend secure-chat-backend secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true && \
+docker rm -f secure-chat-frontend secure-chat-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true && \
 docker rmi -f secure-chat-frontend:latest secure-chat-backend:latest caddy:2 2>/dev/null || true && \
 docker network rm secure-chat-net 2>/dev/null || true && \
 docker volume rm sm_pgdata sm_redisdata caddy_data caddy_config 2>/dev/null || true && \
@@ -507,5 +522,5 @@ If Docker still reports `Bind for 0.0.0.0:8000 failed: port is already allocated
 
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep 8000 || true
-docker rm -f secure-chat-backend secure-messenger-backend 2>/dev/null || true
+docker rm -f secure-chat-backend 2>/dev/null || true
 ```

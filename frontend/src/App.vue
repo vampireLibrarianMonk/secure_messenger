@@ -648,15 +648,9 @@ async function downloadAttachment(message: { plaintext: string; attachments: Att
     if (!authToken) throw new Error("Not authenticated");
 
     const apiBase = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
-    const origin = new URL(apiBase).origin;
-    const normalizedBlobPath = attachment.blob.startsWith("/")
-      ? attachment.blob
-      : attachment.blob.startsWith("media/")
-        ? `/${attachment.blob}`
-        : `/media/${attachment.blob}`;
-    const blobUrl = attachment.blob.startsWith("http") ? attachment.blob : `${origin}${normalizedBlobPath}`;
+    const attachmentDownloadUrl = `${apiBase}/attachments/${attachment.id}/download/`;
 
-    const response = await fetch(blobUrl, {
+    const response = await fetch(attachmentDownloadUrl, {
       headers: {
         Authorization: `Bearer ${authToken}`,
       },
