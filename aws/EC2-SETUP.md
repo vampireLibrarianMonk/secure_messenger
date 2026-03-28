@@ -171,7 +171,7 @@ docker run -d \
   --name secure-chat-backend \
   --network secure-chat-net \
   -p 8000:8000 \
-  --restart unless-stopped \
+  --restart always \
   -v sm_media:/app/media \
   -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
   -e DJANGO_DEBUG=0 \
@@ -191,7 +191,7 @@ docker run -d \
   --name secure-chat-frontend \
   --network secure-chat-net \
   -p 8080:80 \
-  --restart unless-stopped \
+  --restart always \
   secure-chat-frontend:latest
 ```
 
@@ -290,7 +290,7 @@ docker rm -f sm-caddy 2>/dev/null || true
 docker run -d \
   --name sm-caddy \
   --network secure-chat-net \
-  --restart unless-stopped \
+  --restart always \
   -p 80:80 -p 443:443 \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
   -v caddy_data:/data \
@@ -318,7 +318,7 @@ docker rm -f sm-caddy 2>/dev/null || true
 docker run -d \
   --name sm-caddy \
   --network secure-chat-net \
-  --restart unless-stopped \
+  --restart always \
   -p 80:80 -p 443:443 \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
   -v caddy_data:/data \
@@ -463,7 +463,7 @@ docker build --no-cache \
   ./frontend
 
 docker rm -f secure-chat-frontend
-docker run -d --name secure-chat-frontend --network secure-chat-net -p 8080:80 --restart unless-stopped secure-chat-frontend:latest
+docker run -d --name secure-chat-frontend --network secure-chat-net -p 8080:80 --restart always secure-chat-frontend:latest
 ```
 
 Then validate in UI (in order):
