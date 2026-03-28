@@ -44,7 +44,7 @@ The document claims a DM flow with ordered stages (`session -> encrypt -> route 
 ## What Is NOT Verified by this Test
 1. It does not cryptographically inspect payload bytes during simulation; it evaluates synthetic evidence flags.
 2. It does not prove key exchange protocol properties (forward secrecy / PCS) for DM sessions.
-3. `backend/messenger/tests.py` only includes a basic ciphertext-posting test (`test_send_ciphertext_message`), not full DM cryptographic validation.
+3. Backend tests now verify ciphertext posting and preservation of per-message `aad.shared_key` values, but they still do not prove a full modern DM key-agreement/ratchet protocol.
 
 ## Standards/Framework Traceability
 - AES-GCM usage aligns conceptually with NIST SP 800-38D style authenticated encryption.
@@ -65,3 +65,14 @@ The document claims a DM flow with ordered stages (`session -> encrypt -> route 
 
 4. **Align synthetic PASS criteria with concrete checks**
    - Update `frontend/src/lib/resultModel.ts` and Admin Test Lab logic so `PASS — E2EE VERIFIED` for DM requires concrete runtime check artifacts, not only synthetic warning-free state.
+
+## Implementation Progress Update (Current Phase)
+### Completed in this phase
+- `frontend/src/stores/chat.ts` now prefers message-level `aad.shared_key` when decrypting envelopes before falling back to cached conversation key state.
+- Added backend tests in `backend/messenger/tests.py` covering:
+  - preservation of `aad.shared_key` in DM message responses
+  - retrieval of multiple DM messages carrying distinct shared keys by the receiving participant
+
+### Security impact
+- Reduces decryption drift caused by stale cached conversation-key state when different historical messages carry different shared-key metadata.
+- Improves implementation traceability for the repository's current simplified DM key-sharing model.

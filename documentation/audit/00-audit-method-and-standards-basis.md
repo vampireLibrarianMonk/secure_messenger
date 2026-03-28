@@ -62,6 +62,13 @@ Therefore, this audit only confirms **implementation traceability**, not externa
    - Expand `backend/messenger/tests.py` with tests that validate ciphertext-only persistence, membership authorization edge cases, and artifact redaction constraints.
    - Add frontend unit/integration tests for `frontend/src/lib/crypto.ts` and message/file workflow correctness.
 
+## Implementation Progress Update (Current Phase)
+- Backend test coverage now includes:
+  - two-user video signaling handshake workflow validation
+  - authenticated attachment download authorization checks
+  - DM message AAD/shared-key preservation checks for receiver fetch paths
+- Attachment delivery architecture now routes normal recipient downloads through authenticated backend endpoint enforcement instead of public static media exposure.
+
 3. **Introduce standards conformance matrix**
    - Add `documentation/appendix/standards-matrix.md` linking algorithms/protocols to RFC/NIST references and implementation status (`implemented`, `partial`, `planned`).
    - Add explicit “not certified” markers where ISO/FIPS/SOC evidence is absent.

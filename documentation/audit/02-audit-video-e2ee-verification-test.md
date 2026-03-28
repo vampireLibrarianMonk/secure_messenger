@@ -26,6 +26,7 @@ The document claims staged flow (`signal -> ice -> relay/direct -> dtls -> e2ee-
   - uses `RTCPeerConnection` + ICE candidates + offer/answer exchange.
   - signaling via websocket (`videoWebsocketUrl(...)`).
   - diagnostics collect RTT, bitrate, packet loss from `getStats()`.
+  - incoming-call listener state and join flow now reuse a more durable per-conversation signaling socket.
 - `backend/messenger/consumers.py` (`VideoSignalingConsumer`)
   - authenticates and enforces membership before join.
   - relays `ready/offer/answer/ice/hangup` events.
@@ -71,6 +72,7 @@ Therefore:
 - Updated frontend signaling client (`frontend/src/stores/video.ts`) to send per-connection monotonic `sequence` on signaling events.
 - Updated frontend signaling flow to wait for server session id before transmitting signaling payloads.
 - Expanded backend unit tests to verify missing identity/sequence rejection and replayed sequence rejection in signaling validation.
+- Added a two-user backend websocket signaling test in `backend/messenger/tests.py` covering start/join flow across `session`, `offer`, `ready`, `answer`, and `ice` messages.
 - Added frontend **media-E2EE scaffold state** in `frontend/src/stores/video.ts`:
   - insertable-stream support detection (`mediaE2eeSupported`),
   - scaffold lifecycle flags (`mediaE2eeEnabled`, `mediaE2eeMode`),
@@ -96,6 +98,7 @@ Therefore:
 ### Security impact
 - Hardens signaling channel against stale/out-of-order replay attempts and malformed unauthenticated signaling envelopes.
 - Improves integrity of call control flow even before full app-layer media E2EE is implemented.
+- Improves confidence that the UI-visible join flow is backed by a working two-party signaling contract.
 - Prevents false-positive `PASS — E2EE VERIFIED` outcomes from synthetic-only video evidence paths.
 
 ### Remaining gaps

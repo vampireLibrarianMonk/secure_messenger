@@ -35,9 +35,13 @@ The document claims file-key generation, client encryption, encrypted upload, wr
 
 ### E) Recipient decrypt/download path is implemented
 - `frontend/src/App.vue` (`downloadAttachment`)
-  - fetches blob from attachment URL
+  - fetches encrypted blob from authenticated backend endpoint `/api/attachments/<id>/download/`
   - decrypts locally with `decryptFile(encryptedBlob, wrapped_file_key, file_nonce, ...)`
   - triggers local download of decrypted content.
+
+- `backend/messenger/views.py` (`AttachmentViewSet.download`)
+  - verifies the requester is a member of the attachment conversation
+  - streams the encrypted blob only after membership authorization
 
 ## Important Cryptographic Caveat
 `wrapped_file_key` is currently treated as directly-usable key material in app flow, not a separately encrypted/wrapped key envelope using a recipient public key/KMS construct.
@@ -65,3 +69,17 @@ Implication:
 4. **Add security tests for attachment path**
    - Add backend tests for unauthorized fetch/upload and malformed metadata rejection.
    - Add frontend tests for decrypt failure and integrity mismatch handling.
+
+## Implementation Progress Update (Current Phase)
+### Completed in this phase
+- Added authenticated attachment download route in `backend/messenger/views.py`:
+  - `GET /api/attachments/<id>/download/`
+  - conversation-membership enforcement before file streaming
+- Updated frontend attachment download path in `frontend/src/App.vue` to use the authenticated backend endpoint instead of public static media fetches.
+- Added backend tests in `backend/messenger/tests.py` covering:
+  - successful encrypted attachment download for a conversation member
+  - denial path for non-member attachment download requests
+
+### Security impact
+- Restores backend authorization for encrypted attachment blob access.
+- Removes reliance on publicly served `/media/*` attachment delivery for normal document download flow.

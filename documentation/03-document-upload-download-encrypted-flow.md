@@ -17,7 +17,7 @@ This test simulates secure document sharing: a sender encrypts a file, uploads e
 2. **encrypt-blob** — file payload encryption stage.
 3. **upload** — encrypted blob transfer stage.
 4. **wrap-key** — wrapped key transfer stage.
-5. **fetch** — recipient retrieval stage.
+5. **fetch** — recipient retrieval stage through an authenticated backend attachment-download endpoint.
 6. **decrypt** — recipient decryption stage.
 
 ## 4) Expected Observability (Console + Logs)
@@ -43,6 +43,7 @@ Classification behavior:
 ## 6) Security-Relevant Assertions
 - Upload stage is represented as encrypted blob transfer.
 - Key management and data payload stages are separated in explicit steps.
+- Recipient fetch is expected to flow through authenticated backend access control rather than public static media exposure.
 - No plaintext document payload is included in synthetic logs/artifacts.
 
 ## 7) Reviewer Checklist
