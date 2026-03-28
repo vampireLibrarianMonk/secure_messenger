@@ -124,23 +124,23 @@ Option A (recommended): clone directly on EC2.
 
 ```bash
 git clone <YOUR_REPO_URL>.git
-cd secure-messenger
+cd secure-chat
 ```
 
 Build backend image:
 
 ```bash
-docker build -t secure-messenger-backend:latest ./backend
+docker build -t secure-chat-backend:latest ./backend
 ```
 
 Build frontend image (set production API/WS URLs):
 
 ```bash
 docker build \
-  --build-arg VITE_API_BASE=https://secure-messenger.my-deployment.com/api \
-  --build-arg VITE_WS_BASE=wss://secure-messenger.my-deployment.com \
+  --build-arg VITE_API_BASE=https://secure-chat.my-deployment.com/api \
+  --build-arg VITE_WS_BASE=wss://secure-chat.my-deployment.com \
   --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]' \
-  -t secure-messenger-frontend:latest \
+  -t secure-chat-frontend:latest \
   ./frontend
 ```
 
@@ -153,7 +153,7 @@ If callers are on different networks and calls fail to connect after "Join", add
 Create network:
 
 ```bash
-docker network create secure-messenger-net || true
+docker network create secure-chat-net || true
 docker volume create sm_media
 ```
 
@@ -168,19 +168,19 @@ Run backend:
 
 ```bash
 docker run -d \
-  --name secure-messenger-backend \
-  --network secure-messenger-net \
+  --name secure-chat-backend \
+  --network secure-chat-net \
   -p 8000:8000 \
   --restart unless-stopped \
   -v sm_media:/app/media \
   -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
   -e DJANGO_DEBUG=0 \
-  -e DJANGO_ALLOWED_HOSTS="secure-messenger.my-deployment.com,<EC2_PUBLIC_IP>" \
-  -e CORS_ALLOWED_ORIGINS="https://secure-messenger.my-deployment.com" \
+  -e DJANGO_ALLOWED_HOSTS="secure-chat.my-deployment.com,<EC2_PUBLIC_IP>" \
+  -e CORS_ALLOWED_ORIGINS="https://secure-chat.my-deployment.com" \
   -e TEST_LAB_ADMIN_USERNAME=lab_admin \
   -e TEST_LAB_ADMIN_EMAIL=lab_admin@example.com \
   -e TEST_LAB_ADMIN_PASSWORD="$TEST_LAB_ADMIN_PASSWORD" \
-  secure-messenger-backend:latest \
+  secure-chat-backend:latest \
   /bin/sh -c "python manage.py migrate && python manage.py bootstrap_single_admin && python -m daphne -b 0.0.0.0 -p 8000 config.asgi:application"
 ```
 
@@ -188,11 +188,11 @@ Run frontend:
 
 ```bash
 docker run -d \
-  --name secure-messenger-frontend \
-  --network secure-messenger-net \
+  --name secure-chat-frontend \
+  --network secure-chat-net \
   -p 8080:80 \
   --restart unless-stopped \
-  secure-messenger-frontend:latest
+  secure-chat-frontend:latest
 ```
 
 > Use this direct frontend port only for container-level checks. For real browser usage, terminate TLS and access via `https://...`.
@@ -202,8 +202,8 @@ docker run -d \
 Create users directly inside the backend container:
 
 ```bash
-docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123_')"
-docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123_')"
+docker exec -i secure-chat-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123_')"
+docker exec -i secure-chat-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123_')"
 ```
 
 ---
@@ -218,7 +218,7 @@ docker volume create sm_redisdata
 
 docker run -d \
   --name sm-postgres \
-  --network secure-messenger-net \
+  --network secure-chat-net \
   -e POSTGRES_DB=secure_messenger \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD='<STRONG_DB_PASSWORD>' \
@@ -227,7 +227,7 @@ docker run -d \
 
 docker run -d \
   --name sm-redis \
-  --network secure-messenger-net \
+  --network secure-chat-net \
   -v sm_redisdata:/data \
   redis:7-alpine
 ```
@@ -255,21 +255,21 @@ Keep backend private to host network where possible; expose only proxy ports 80/
 Create/update `Caddyfile`:
 
 ```caddy
-secure-messenger.my-deployment.com {
+secure-chat.my-deployment.com {
   @api path /api/* /ws/*
 
-  reverse_proxy @api secure-messenger-backend:8000
+  reverse_proxy @api secure-chat-backend:8000
 
   handle_path /media/* {
     root * /srv
     file_server
   }
 
-  reverse_proxy secure-messenger-frontend:80
+  reverse_proxy secure-chat-frontend:80
 }
 ```
 
-This Caddy setup assumes Caddy runs on the same Docker network as backend/frontend (`secure-messenger-net`).
+This Caddy setup assumes Caddy runs on the same Docker network as backend/frontend (`secure-chat-net`).
 
 Why `handle_path /media/*`? In this deployment, backend commonly runs with `DJANGO_DEBUG=0`, and Django does not serve media URLs by default in that mode. Serving `/media/*` from the shared Docker volume avoids attachment 404s.
 
@@ -277,17 +277,17 @@ Command form (recommended) to update the file directly on EC2:
 
 ```bash
 cat > Caddyfile <<'EOF'
-secure-messenger.my-deployment.com {
+secure-chat.my-deployment.com {
   @api path /api/* /ws/*
 
-  reverse_proxy @api secure-messenger-backend:8000
+  reverse_proxy @api secure-chat-backend:8000
 
   handle_path /media/* {
     root * /srv
     file_server
   }
 
-  reverse_proxy secure-messenger-frontend:80
+  reverse_proxy secure-chat-frontend:80
 }
 EOF
 ```
@@ -299,7 +299,7 @@ docker rm -f sm-caddy 2>/dev/null || true
 
 docker run -d \
   --name sm-caddy \
-  --network secure-messenger-net \
+  --network secure-chat-net \
   --restart unless-stopped \
   -p 80:80 -p 443:443 \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
@@ -314,8 +314,8 @@ Before opening the website, verify Caddy and app upstreams are healthy:
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 docker logs --tail 80 sm-caddy
-curl -I https://secure-messenger.my-deployment.com/
-curl -i https://secure-messenger.my-deployment.com/api/
+curl -I https://secure-chat.my-deployment.com/
+curl -i https://secure-chat.my-deployment.com/api/
 ```
 
 Expected:
@@ -326,7 +326,7 @@ Expected:
 
 Then access only:
 
-- `https://secure-messenger.my-deployment.com`
+- `https://secure-chat.my-deployment.com`
 
 > Ensure EC2 security group allows inbound TCP `80` and `443`, otherwise Let's Encrypt validation will fail.
 
@@ -338,13 +338,13 @@ On EC2:
 
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-docker logs --tail 100 secure-messenger-backend
-docker exec -i secure-messenger-backend python manage.py check
+docker logs --tail 100 secure-chat-backend
+docker exec -i secure-chat-backend python manage.py check
 ```
 
 From browser:
 
-1. Open frontend URL over HTTPS (`https://secure-messenger.my-deployment.com`).
+1. Open frontend URL over HTTPS (`https://secure-chat.my-deployment.com`).
 2. Login two pre-provisioned users.
 3. Verify encrypted messaging and file exchange.
 4. Verify websocket connectivity and video call flow.
@@ -352,8 +352,8 @@ From browser:
 Quick CLI validation:
 
 ```bash
-curl -I https://secure-messenger.my-deployment.com/
-curl -i https://secure-messenger.my-deployment.com/api/
+curl -I https://secure-chat.my-deployment.com/
+curl -i https://secure-chat.my-deployment.com/api/
 ```
 
 Expected:
@@ -367,7 +367,7 @@ Before user testing, verify these specifics:
 
 ```bash
 # backend must mount the shared media volume used by Caddy
-docker inspect secure-messenger-backend --format '{{json .Mounts}}'
+docker inspect secure-chat-backend --format '{{json .Mounts}}'
 
 # Caddy must mount the same volume read-only for /media serving
 docker inspect sm-caddy --format '{{json .Mounts}}'
@@ -390,12 +390,12 @@ If signaling test passes but call does not connect, that usually means NAT trave
 
 - **Frontend cannot reach backend:** verify `VITE_API_BASE`/`VITE_WS_BASE` were set at image build time.
 - **`crypto.randomUUID is not a function`:** you're likely on insecure HTTP origin; switch to HTTPS domain access.
-- **Caddy 502 `dial tcp 127.0.0.1:8080 connect: connection refused`:** Caddy is in a container; use Docker service names (`secure-messenger-frontend:80`, `secure-messenger-backend:8000`) and attach Caddy to `secure-messenger-net`.
+- **Caddy 502 `dial tcp 127.0.0.1:8080 connect: connection refused`:** Caddy is in a container; use Docker service names (`secure-chat-frontend:80`, `secure-chat-backend:8000`) and attach Caddy to `secure-chat-net`.
 - **Let's Encrypt `Timeout during connect (likely firewall problem)`:** open EC2 security group inbound TCP `80` and `443`.
 - **Attachment download `404` with files present in `/app/media/attachments`:** Caddy must serve `/media/*` from `sm_media` (mounted read-only to `/srv`), or Django must be explicitly configured to serve media in production.
 - **Attachment upload appears but receiver gets 404:** ensure backend is started with `-v sm_media:/app/media` and Caddy with `-v sm_media:/srv:ro` (same volume name).
 - **Attachment uploaded before media volume was mounted:** old files may be unrecoverable after container restart; upload a new file after `sm_media` is in place.
-- **Caller can start but receiver cannot complete call join:** verify `VITE_WS_BASE=wss://secure-messenger.my-deployment.com`, run in-app **Signaling Test**, and add TURN servers via `VITE_ICE_SERVERS` for cross-network NAT traversal.
+- **Caller can start but receiver cannot complete call join:** verify `VITE_WS_BASE=wss://secure-chat.my-deployment.com`, run in-app **Signaling Test**, and add TURN servers via `VITE_ICE_SERVERS` for cross-network NAT traversal.
 - **Calls still fail after config changes:** frontend env is baked at image build time; rebuild frontend with `--no-cache` and restart the frontend container.
 - **Video call audio is loud/garbled:** test both participants on the same browser family first (Firefox↔Firefox or Chrome↔Chrome). Mixed browser stacks can produce unstable behavior with current runtime media transform behavior in this prototype.
 - **400 bad host / CORS errors:** check `DJANGO_ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
@@ -432,23 +432,23 @@ Use this exact sequence after deployment changes:
 
 ```bash
 # 1) Verify expected container mounts
-docker inspect secure-messenger-backend --format '{{json .Mounts}}'
+docker inspect secure-chat-backend --format '{{json .Mounts}}'
 docker inspect sm-caddy --format '{{json .Mounts}}'
 
 # 2) Verify HTTPS/API health before UI tests
-curl -I https://secure-messenger.my-deployment.com/
-curl -i https://secure-messenger.my-deployment.com/api/
+curl -I https://secure-chat.my-deployment.com/
+curl -i https://secure-chat.my-deployment.com/api/
 
 # 3) Rebuild frontend whenever VITE_* changes (WS/ICE vars are build-time)
 docker build --no-cache \
-  --build-arg VITE_API_BASE=https://secure-messenger.my-deployment.com/api \
-  --build-arg VITE_WS_BASE=wss://secure-messenger.my-deployment.com \
+  --build-arg VITE_API_BASE=https://secure-chat.my-deployment.com/api \
+  --build-arg VITE_WS_BASE=wss://secure-chat.my-deployment.com \
   --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]' \
-  -t secure-messenger-frontend:latest \
+  -t secure-chat-frontend:latest \
   ./frontend
 
-docker rm -f secure-messenger-frontend
-docker run -d --name secure-messenger-frontend --network secure-messenger-net -p 8080:80 --restart unless-stopped secure-messenger-frontend:latest
+docker rm -f secure-chat-frontend
+docker run -d --name secure-chat-frontend --network secure-chat-net -p 8080:80 --restart unless-stopped secure-chat-frontend:latest
 ```
 
 Then validate in UI (in order):
@@ -466,19 +466,19 @@ Use this section to fully reset the EC2 deployment and rebuild from scratch.
 ### Stop and remove running containers
 
 ```bash
-docker rm -f secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true
+docker rm -f secure-chat-frontend secure-chat-backend secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true
 ```
 
 ### Remove app images
 
 ```bash
-docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest caddy:2 2>/dev/null || true
+docker rmi -f secure-chat-frontend:latest secure-chat-backend:latest caddy:2 2>/dev/null || true
 ```
 
 ### Remove app network
 
 ```bash
-docker network rm secure-messenger-net 2>/dev/null || true
+docker network rm secure-chat-net 2>/dev/null || true
 ```
 
 ### Remove persisted volumes (WARNING: deletes DB/cache/caddy data)
@@ -496,9 +496,16 @@ docker builder prune -af
 ### Full one-shot reset command
 
 ```bash
-docker rm -f secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true && \
-docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest caddy:2 2>/dev/null || true && \
-docker network rm secure-messenger-net 2>/dev/null || true && \
+docker rm -f secure-chat-frontend secure-chat-backend secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true && \
+docker rmi -f secure-chat-frontend:latest secure-chat-backend:latest caddy:2 2>/dev/null || true && \
+docker network rm secure-chat-net 2>/dev/null || true && \
 docker volume rm sm_pgdata sm_redisdata caddy_data caddy_config 2>/dev/null || true && \
 docker builder prune -af
+```
+
+If Docker still reports `Bind for 0.0.0.0:8000 failed: port is already allocated`, identify and remove the leftover container using port 8000 before restarting backend:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep 8000 || true
+docker rm -f secure-chat-backend secure-messenger-backend 2>/dev/null || true
 ```

@@ -649,7 +649,12 @@ async function downloadAttachment(message: { plaintext: string; attachments: Att
 
     const apiBase = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
     const origin = new URL(apiBase).origin;
-    const blobUrl = attachment.blob.startsWith("http") ? attachment.blob : `${origin}${attachment.blob}`;
+    const normalizedBlobPath = attachment.blob.startsWith("/")
+      ? attachment.blob
+      : attachment.blob.startsWith("media/")
+        ? `/${attachment.blob}`
+        : `/media/${attachment.blob}`;
+    const blobUrl = attachment.blob.startsWith("http") ? attachment.blob : `${origin}${normalizedBlobPath}`;
 
     const response = await fetch(blobUrl, {
       headers: {

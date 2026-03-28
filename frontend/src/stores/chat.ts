@@ -118,19 +118,21 @@ export const useChatStore = defineStore("chat", {
     },
     async decryptEnvelope(message: MessageEnvelope): Promise<DecryptedMessage> {
       const security = useSecurityStore();
-      let key = security.getConversationKey(message.conversation);
+      let keyFromAad: string | undefined;
 
-      if (!key && message.aad) {
+      if (message.aad) {
         try {
           const aad = JSON.parse(message.aad) as { shared_key?: string };
           if (aad.shared_key) {
+            keyFromAad = aad.shared_key;
             security.setConversationKey(message.conversation, aad.shared_key);
-            key = aad.shared_key;
           }
         } catch {
           // ignore malformed AAD payload
         }
       }
+
+      let key = keyFromAad ?? security.getConversationKey(message.conversation);
 
       if (!key) {
         return { ...message, plaintext: "🔒 Encrypted message (missing key)" };
