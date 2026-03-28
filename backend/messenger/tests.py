@@ -1,10 +1,13 @@
 import base64
 
+from asgiref.sync import async_to_sync
+from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
+from config.asgi import application
 from .models import Attachment, Conversation, ConversationMember, MessageEnvelope, SessionEvent
 from .consumers import _validate_video_signal_message
 
@@ -512,3 +515,120 @@ class VideoSignalValidationTests(TestCase):
         )
         self.assertFalse(ok)
         self.assertEqual(error, "missing_client_id")
+
+
+class VideoSignalingHandshakeTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(username="alice", password="testpass123")
+        self.bob = User.objects.create_user(username="bob", password="testpass123")
+        self.client = APIClient()
+
+        self.alice_token = self.client.post(
+            "/api/auth/login/", {"username": "alice", "password": "testpass123"}, format="json"
+        ).data["access"]
+        self.bob_token = self.client.post(
+            "/api/auth/login/", {"username": "bob", "password": "testpass123"}, format="json"
+        ).data["access"]
+
+        self.conversation = Conversation.objects.create(
+            kind=Conversation.TYPE_DM,
+            title="dm",
+            created_by=self.alice,
+        )
+        ConversationMember.objects.create(conversation=self.conversation, user=self.alice)
+        ConversationMember.objects.create(conversation=self.conversation, user=self.bob)
+
+    def test_two_user_start_join_signal_workflow(self):
+        async def scenario():
+            async def receive_until_type(communicator, expected_type: str):
+                while True:
+                    message = await communicator.receive_json_from()
+                    if message["type"] == expected_type:
+                        return message
+
+            alice = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.alice_token}",
+            )
+            bob = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.bob_token}",
+            )
+
+            connected_alice, _ = await alice.connect()
+            connected_bob, _ = await bob.connect()
+            self.assertTrue(connected_alice)
+            self.assertTrue(connected_bob)
+
+            alice_session = await alice.receive_json_from()
+            bob_session = await bob.receive_json_from()
+            self.assertEqual(alice_session["type"], "session")
+            self.assertEqual(bob_session["type"], "session")
+
+            alice_session_id = alice_session["payload"]["signaling_session_id"]
+            bob_session_id = bob_session["payload"]["signaling_session_id"]
+            self.assertTrue(alice_session_id)
+            self.assertTrue(bob_session_id)
+            self.assertNotEqual(alice_session_id, bob_session_id)
+
+            await alice.send_json_to(
+                {
+                    "type": "offer",
+                    "payload": {"type": "offer", "sdp": "fake-offer-sdp"},
+                    "client_id": "alice-client",
+                    "sequence": 1,
+                    "signaling_session_id": alice_session_id,
+                }
+            )
+
+            bob_offer = await bob.receive_json_from()
+            self.assertEqual(bob_offer["type"], "offer")
+            self.assertEqual(bob_offer["sender_client_id"], "alice-client")
+            self.assertEqual(bob_offer["payload"]["type"], "offer")
+
+            await bob.send_json_to(
+                {
+                    "type": "ready",
+                    "payload": {"ok": True},
+                    "client_id": "bob-client",
+                    "sequence": 1,
+                    "signaling_session_id": bob_session_id,
+                }
+            )
+
+            alice_ready = await receive_until_type(alice, "ready")
+            self.assertEqual(alice_ready["type"], "ready")
+            self.assertEqual(alice_ready["sender_client_id"], "bob-client")
+
+            await bob.send_json_to(
+                {
+                    "type": "answer",
+                    "payload": {"type": "answer", "sdp": "fake-answer-sdp"},
+                    "client_id": "bob-client",
+                    "sequence": 2,
+                    "signaling_session_id": bob_session_id,
+                }
+            )
+
+            alice_answer = await receive_until_type(alice, "answer")
+            self.assertEqual(alice_answer["type"], "answer")
+            self.assertEqual(alice_answer["payload"]["type"], "answer")
+
+            await alice.send_json_to(
+                {
+                    "type": "ice",
+                    "payload": {"candidate": "candidate:1 1 UDP 1 0.0.0.0 9 typ host", "sdpMid": "0", "sdpMLineIndex": 0},
+                    "client_id": "alice-client",
+                    "sequence": 2,
+                    "signaling_session_id": alice_session_id,
+                }
+            )
+
+            bob_ice = await receive_until_type(bob, "ice")
+            self.assertEqual(bob_ice["type"], "ice")
+            self.assertEqual(bob_ice["sender_client_id"], "alice-client")
+
+            await alice.disconnect()
+            await bob.disconnect()
+
+        async_to_sync(scenario)()

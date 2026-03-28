@@ -139,9 +139,12 @@ Build frontend image (set production API/WS URLs):
 docker build \
   --build-arg VITE_API_BASE=https://secure-messenger.my-deployment.com/api \
   --build-arg VITE_WS_BASE=wss://secure-messenger.my-deployment.com \
+  --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]' \
   -t secure-messenger-frontend:latest \
   ./frontend
 ```
+
+If callers are on different networks and calls fail to connect after "Join", add TURN in `VITE_ICE_SERVERS` and rebuild frontend.
 
 ---
 
@@ -151,6 +154,7 @@ Create network:
 
 ```bash
 docker network create secure-messenger-net || true
+docker volume create sm_media
 ```
 
 Generate secrets (example):
@@ -168,6 +172,7 @@ docker run -d \
   --network secure-messenger-net \
   -p 8000:8000 \
   --restart unless-stopped \
+  -v sm_media:/app/media \
   -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
   -e DJANGO_DEBUG=0 \
   -e DJANGO_ALLOWED_HOSTS="secure-messenger.my-deployment.com,<EC2_PUBLIC_IP>" \
@@ -197,8 +202,8 @@ docker run -d \
 Create users directly inside the backend container:
 
 ```bash
-docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123!')"
-docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123!')"
+docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_a', email='user_a@example.com', password='ChangeMe123_')"
+docker exec -i secure-messenger-backend python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_user(username='user_b', email='user_b@example.com', password='ChangeMe123_')"
 ```
 
 ---
@@ -356,6 +361,29 @@ Expected:
 - `/` returns `200`
 - `/api/` may return `401` when unauthenticated (this is healthy)
 
+### 8b) Real-time call + file preflight checks (recommended)
+
+Before user testing, verify these specifics:
+
+```bash
+# backend must mount the shared media volume used by Caddy
+docker inspect secure-messenger-backend --format '{{json .Mounts}}'
+
+# Caddy must mount the same volume read-only for /media serving
+docker inspect sm-caddy --format '{{json .Mounts}}'
+```
+
+Expected: backend has `sm_media -> /app/media` and Caddy has `sm_media -> /srv`.
+
+Then in the app UI:
+
+1. Open a conversation.
+2. Use **Video -> Debug tools -> Signaling Test** on both users.
+3. Start call from User A, click **Join Call** on User B.
+4. Upload a file from User A and download from User B.
+
+If signaling test passes but call does not connect, that usually means NAT traversal needs TURN (not just STUN).
+
 ---
 
 ## 9) Troubleshooting quick hits
@@ -365,6 +393,10 @@ Expected:
 - **Caddy 502 `dial tcp 127.0.0.1:8080 connect: connection refused`:** Caddy is in a container; use Docker service names (`secure-messenger-frontend:80`, `secure-messenger-backend:8000`) and attach Caddy to `secure-messenger-net`.
 - **Let's Encrypt `Timeout during connect (likely firewall problem)`:** open EC2 security group inbound TCP `80` and `443`.
 - **Attachment download `404` with files present in `/app/media/attachments`:** Caddy must serve `/media/*` from `sm_media` (mounted read-only to `/srv`), or Django must be explicitly configured to serve media in production.
+- **Attachment upload appears but receiver gets 404:** ensure backend is started with `-v sm_media:/app/media` and Caddy with `-v sm_media:/srv:ro` (same volume name).
+- **Attachment uploaded before media volume was mounted:** old files may be unrecoverable after container restart; upload a new file after `sm_media` is in place.
+- **Caller can start but receiver cannot complete call join:** verify `VITE_WS_BASE=wss://secure-messenger.my-deployment.com`, run in-app **Signaling Test**, and add TURN servers via `VITE_ICE_SERVERS` for cross-network NAT traversal.
+- **Calls still fail after config changes:** frontend env is baked at image build time; rebuild frontend with `--no-cache` and restart the frontend container.
 - **Video call audio is loud/garbled:** test both participants on the same browser family first (Firefox↔Firefox or Chrome↔Chrome). Mixed browser stacks can produce unstable behavior with current runtime media transform behavior in this prototype.
 - **400 bad host / CORS errors:** check `DJANGO_ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS`.
 - **Websocket issues:** ensure reverse proxy forwards `Upgrade` and `Connection` headers.
@@ -394,6 +426,39 @@ Recommended hardening baseline:
 
 ---
 
+## 9c) Lessons learned runbook (document download + call join)
+
+Use this exact sequence after deployment changes:
+
+```bash
+# 1) Verify expected container mounts
+docker inspect secure-messenger-backend --format '{{json .Mounts}}'
+docker inspect sm-caddy --format '{{json .Mounts}}'
+
+# 2) Verify HTTPS/API health before UI tests
+curl -I https://secure-messenger.my-deployment.com/
+curl -i https://secure-messenger.my-deployment.com/api/
+
+# 3) Rebuild frontend whenever VITE_* changes (WS/ICE vars are build-time)
+docker build --no-cache \
+  --build-arg VITE_API_BASE=https://secure-messenger.my-deployment.com/api \
+  --build-arg VITE_WS_BASE=wss://secure-messenger.my-deployment.com \
+  --build-arg VITE_ICE_SERVERS='[{"urls":["stun:stun.l.google.com:19302"]}]' \
+  -t secure-messenger-frontend:latest \
+  ./frontend
+
+docker rm -f secure-messenger-frontend
+docker run -d --name secure-messenger-frontend --network secure-messenger-net -p 8080:80 --restart unless-stopped secure-messenger-frontend:latest
+```
+
+Then validate in UI (in order):
+
+1. Run **Video -> Debug tools -> Signaling Test** on both accounts.
+2. Start call on user A, click **Join Call** on user B.
+3. Upload a **new** file and verify receiver can download/open it.
+
+---
+
 ## 10) Docker cleanup and reset (start fresh)
 
 Use this section to fully reset the EC2 deployment and rebuild from scratch.
@@ -407,7 +472,7 @@ docker rm -f secure-messenger-frontend secure-messenger-backend sm-postgres sm-r
 ### Remove app images
 
 ```bash
-docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest 2>/dev/null || true
+docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest caddy:2 2>/dev/null || true
 ```
 
 ### Remove app network
@@ -432,7 +497,7 @@ docker builder prune -af
 
 ```bash
 docker rm -f secure-messenger-frontend secure-messenger-backend sm-postgres sm-redis sm-caddy 2>/dev/null || true && \
-docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest 2>/dev/null || true && \
+docker rmi -f secure-messenger-frontend:latest secure-messenger-backend:latest caddy:2 2>/dev/null || true && \
 docker network rm secure-messenger-net 2>/dev/null || true && \
 docker volume rm sm_pgdata sm_redisdata caddy_data caddy_config 2>/dev/null || true && \
 docker builder prune -af

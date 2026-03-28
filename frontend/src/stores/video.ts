@@ -7,6 +7,7 @@ type CallStatus = "idle" | "testing" | "connecting" | "active" | "ended" | "erro
 
 const transformedSenders = new WeakSet<RTCRtpSender>();
 const transformedReceivers = new WeakSet<RTCRtpReceiver>();
+let listenerReconnectTimer: number | null = null;
 
 interface VideoState {
   ws: WebSocket | null;
@@ -138,6 +139,61 @@ export const useVideoStore = defineStore("video", {
     },
   },
   actions: {
+    clearListenerReconnect() {
+      if (listenerReconnectTimer !== null) {
+        window.clearTimeout(listenerReconnectTimer);
+        listenerReconnectTimer = null;
+      }
+    },
+
+    scheduleListenerReconnect(conversationId: number) {
+      this.clearListenerReconnect();
+      listenerReconnectTimer = window.setTimeout(() => {
+        listenerReconnectTimer = null;
+        if (!this.inCall && this.callConversationId === conversationId) {
+          void this.listenForIncoming(conversationId);
+        }
+      }, 1000);
+    },
+
+    closeSignalingSocket() {
+      this.clearListenerReconnect();
+      this.ws?.close();
+      this.ws = null;
+      this.signalSequence = 0;
+      this.signalingSessionId = null;
+    },
+
+    resetPeerState(preserveSocket = false) {
+      this.peer?.close();
+      this.peer = null;
+      this.loopbackPeer?.close();
+      this.loopbackPeer = null;
+
+      this.localStream?.getTracks().forEach((track) => track.stop());
+      this.remoteStream?.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+      this.remoteStream = null;
+
+      this.pendingIce = [];
+      this.hasIncomingCallIntent = false;
+      this.playOutgoingRing = false;
+      this.playIncomingRing = false;
+      this.isDialing = false;
+      this.stopDiagnosticsLoop();
+      this.mediaE2eeEnabled = false;
+      this.mediaE2eeMode = this.mediaE2eeSupported ? "scaffold" : "unavailable";
+      this.mediaE2eeKeyFingerprint = null;
+      this.mediaE2eeKeyRotatedAt = null;
+      this.mediaE2eeRuntimeTransformClass = "none";
+      this.mediaE2eeRuntimeAttachmentCount = 0;
+
+      if (!preserveSocket) {
+        this.closeSignalingSocket();
+        this.callConversationId = null;
+      }
+    },
+
     supportsInsertableStreams(): boolean {
       const senderProto = (
         window as typeof window & {
@@ -423,6 +479,7 @@ export const useVideoStore = defineStore("video", {
       const auth = useAuthStore();
       if (!auth.accessToken) return;
       if (this.inCall) return;
+      this.clearListenerReconnect();
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN && this.callConversationId === conversationId) {
         return;
@@ -475,6 +532,11 @@ export const useVideoStore = defineStore("video", {
         ws.onclose = () => {
           if (this.ws === ws) {
             this.ws = null;
+            this.signalingSessionId = null;
+            this.signalSequence = 0;
+            if (!this.inCall && this.callConversationId === conversationId) {
+              this.scheduleListenerReconnect(conversationId);
+            }
           }
         };
       }).catch((error) => {
@@ -658,7 +720,7 @@ export const useVideoStore = defineStore("video", {
 
     async startCall(conversationId: number) {
       try {
-        await this.endCall(false);
+        this.resetPeerState(true);
         this.status = "connecting";
         this.statusMessage = "Starting call...";
         this.callConversationId = conversationId;
@@ -683,7 +745,7 @@ export const useVideoStore = defineStore("video", {
 
     async joinCall(conversationId: number) {
       try {
-        await this.endCall(false);
+        this.resetPeerState(true);
         this.status = "connecting";
         this.statusMessage = "Joining call...";
         this.callConversationId = conversationId;
@@ -711,8 +773,7 @@ export const useVideoStore = defineStore("video", {
         return;
       }
 
-      this.ws?.close();
-      this.ws = null;
+      this.closeSignalingSocket();
 
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(videoWebsocketUrl(conversationId, auth.accessToken!));
@@ -759,6 +820,11 @@ export const useVideoStore = defineStore("video", {
           await this.handleSignal(data.type, data.payload);
         };
         ws.onclose = (event) => {
+          if (this.ws === ws) {
+            this.ws = null;
+            this.signalingSessionId = null;
+            this.signalSequence = 0;
+          }
           if (!this.ws) {
             reject(new Error(`Video signaling websocket ${closeDetail(event.code, event.reason)}`));
             return;
@@ -959,40 +1025,21 @@ export const useVideoStore = defineStore("video", {
     },
 
     async endCall(notify = true) {
+      const conversationId = this.callConversationId;
       if (notify) {
         this.sendSignal("hangup", { ended: true });
       }
 
-      this.peer?.close();
-      this.peer = null;
-      this.loopbackPeer?.close();
-      this.loopbackPeer = null;
-
-      this.ws?.close();
-      this.ws = null;
-
-      this.localStream?.getTracks().forEach((track) => track.stop());
-      this.remoteStream?.getTracks().forEach((track) => track.stop());
-      this.localStream = null;
-      this.remoteStream = null;
-
-      this.pendingIce = [];
-      this.callConversationId = null;
-      this.hasIncomingCallIntent = false;
-      this.playOutgoingRing = false;
-      this.playIncomingRing = false;
-      this.isDialing = false;
+      this.resetPeerState(true);
       this.status = "ended";
       this.statusMessage = "Call ended";
-      this.stopDiagnosticsLoop();
-      this.signalSequence = 0;
-      this.signalingSessionId = null;
-      this.mediaE2eeEnabled = false;
-      this.mediaE2eeMode = this.mediaE2eeSupported ? "scaffold" : "unavailable";
-      this.mediaE2eeKeyFingerprint = null;
-      this.mediaE2eeKeyRotatedAt = null;
-      this.mediaE2eeRuntimeTransformClass = "none";
-      this.mediaE2eeRuntimeAttachmentCount = 0;
+      if (conversationId !== null) {
+        this.callConversationId = conversationId;
+        await this.listenForIncoming(conversationId);
+      } else {
+        this.callConversationId = null;
+        this.closeSignalingSocket();
+      }
     },
 
     resetStatusIfIdle() {
