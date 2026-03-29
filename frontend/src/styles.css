@@ -346,30 +346,6 @@ body {
   font-size: 0.82rem;
 }
 
-.video-volume-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
-}
-
-.video-volume-row label {
-  min-width: 110px;
-  color: #cbd5e1;
-  font-size: 0.85rem;
-}
-
-.video-volume-row input[type="range"] {
-  flex: 1;
-}
-
-.video-volume-row span {
-  min-width: 48px;
-  text-align: right;
-  color: #93c5fd;
-  font-size: 0.85rem;
-}
-
 .video-debug summary {
   cursor: pointer;
   color: #93c5fd;
@@ -496,8 +472,4 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 
-  .video-volume-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }

@@ -723,3 +723,127 @@ class VideoSignalingHandshakeTests(TestCase):
             await bob.disconnect()
 
         async_to_sync(scenario)()
+
+    def test_sender_offer_is_echoed_and_peer_also_receives_offer(self):
+        async def scenario():
+            alice = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.alice_token}",
+            )
+            bob = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.bob_token}",
+            )
+
+            connected_alice, _ = await alice.connect()
+            connected_bob, _ = await bob.connect()
+            self.assertTrue(connected_alice)
+            self.assertTrue(connected_bob)
+
+            alice_session = await alice.receive_json_from()
+            bob_session = await bob.receive_json_from()
+            alice_session_id = alice_session["payload"]["signaling_session_id"]
+
+            await alice.send_json_to(
+                {
+                    "type": "offer",
+                    "payload": {"type": "offer", "sdp": "fake-offer-sdp"},
+                    "client_id": "alice-client",
+                    "sequence": 1,
+                    "signaling_session_id": alice_session_id,
+                }
+            )
+
+            alice_echo = await alice.receive_json_from()
+            bob_offer = await bob.receive_json_from()
+
+            self.assertEqual(alice_echo["type"], "offer")
+            self.assertEqual(alice_echo["sender_client_id"], "alice-client")
+            self.assertEqual(alice_echo["payload"]["type"], "offer")
+
+            self.assertEqual(bob_offer["type"], "offer")
+            self.assertEqual(bob_offer["sender_client_id"], "alice-client")
+            self.assertEqual(bob_offer["payload"]["type"], "offer")
+
+            await alice.disconnect()
+            await bob.disconnect()
+
+        async_to_sync(scenario)()
+
+    def test_offer_before_join_can_be_resent_after_ready(self):
+        async def scenario():
+            async def receive_until_type(communicator, expected_type: str):
+                while True:
+                    message = await communicator.receive_json_from()
+                    if message["type"] == expected_type:
+                        return message
+
+            alice = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.alice_token}",
+            )
+            bob = WebsocketCommunicator(
+                application,
+                f"/ws/video/conversations/{self.conversation.id}/?token={self.bob_token}",
+            )
+
+            connected_alice, _ = await alice.connect()
+            connected_bob, _ = await bob.connect()
+            self.assertTrue(connected_alice)
+            self.assertTrue(connected_bob)
+
+            alice_session = await alice.receive_json_from()
+            bob_session = await bob.receive_json_from()
+            alice_session_id = alice_session["payload"]["signaling_session_id"]
+            bob_session_id = bob_session["payload"]["signaling_session_id"]
+
+            await alice.send_json_to(
+                {
+                    "type": "offer",
+                    "payload": {"type": "offer", "sdp": "first-offer-sdp"},
+                    "client_id": "alice-client",
+                    "sequence": 1,
+                    "signaling_session_id": alice_session_id,
+                }
+            )
+
+            # Sender sees echoed self-message, peer sees first offer.
+            alice_echo = await alice.receive_json_from()
+            bob_first_offer = await bob.receive_json_from()
+            self.assertEqual(alice_echo["type"], "offer")
+            self.assertEqual(bob_first_offer["type"], "offer")
+            self.assertEqual(bob_first_offer["payload"]["sdp"], "first-offer-sdp")
+
+            await bob.send_json_to(
+                {
+                    "type": "ready",
+                    "payload": {"ok": True},
+                    "client_id": "bob-client",
+                    "sequence": 1,
+                    "signaling_session_id": bob_session_id,
+                }
+            )
+
+            alice_ready = await receive_until_type(alice, "ready")
+            self.assertEqual(alice_ready["sender_client_id"], "bob-client")
+
+            await alice.send_json_to(
+                {
+                    "type": "offer",
+                    "payload": {"type": "offer", "sdp": "resent-offer-sdp"},
+                    "client_id": "alice-client",
+                    "sequence": 2,
+                    "signaling_session_id": alice_session_id,
+                }
+            )
+
+            alice_echo_resent = await alice.receive_json_from()
+            bob_resent_offer = await bob.receive_json_from()
+            self.assertEqual(alice_echo_resent["type"], "offer")
+            self.assertEqual(bob_resent_offer["type"], "offer")
+            self.assertEqual(bob_resent_offer["payload"]["sdp"], "resent-offer-sdp")
+
+            await alice.disconnect()
+            await bob.disconnect()
+
+        async_to_sync(scenario)()

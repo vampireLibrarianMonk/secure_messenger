@@ -166,7 +166,10 @@ export const useVideoStore = defineStore("video", {
       this.signalingSessionId = null;
     },
 
-    resetPeerState(preserveSocket = false) {
+    resetPeerState(preserveSocket = false, preservePendingOffer = false, preservePendingIce = false) {
+      const cachedPendingOffer = preservePendingOffer ? this.pendingRemoteOffer : null;
+      const cachedPendingIce = preservePendingIce ? [...this.pendingIce] : [];
+
       this.peer?.close();
       this.peer = null;
       this.loopbackPeer?.close();
@@ -176,9 +179,9 @@ export const useVideoStore = defineStore("video", {
       this.remoteStream?.getTracks().forEach((track) => track.stop());
       this.localStream = null;
       this.remoteStream = null;
-      this.pendingRemoteOffer = null;
+      this.pendingRemoteOffer = cachedPendingOffer;
 
-      this.pendingIce = [];
+      this.pendingIce = cachedPendingIce;
       this.hasIncomingCallIntent = false;
       this.playOutgoingRing = false;
       this.playIncomingRing = false;
@@ -325,6 +328,15 @@ export const useVideoStore = defineStore("video", {
       if (!this.peer || !this.mediaE2eeSupported) {
         return;
       }
+
+      // Experimental XOR frame obfuscation is not interoperable enough yet
+      // for reliable real-world video. Keep the scaffold capability metadata,
+      // but do not attach runtime transforms during active calls.
+      this.mediaE2eeEnabled = this.mediaE2eeSupported;
+      this.mediaE2eeMode = this.mediaE2eeSupported ? "scaffold" : "unavailable";
+      this.mediaE2eeRuntimeTransformClass = "none";
+      this.mediaE2eeRuntimeAttachmentCount = 0;
+      return;
 
       let attachedCount = 0;
       for (const sender of this.peer.getSenders()) {
@@ -493,6 +505,7 @@ export const useVideoStore = defineStore("video", {
       this.callConversationId = conversationId;
 
       await new Promise<void>((resolve, reject) => {
+        const signalingUrl = videoWebsocketUrl(conversationId, auth.accessToken!);
         const ws = new WebSocket(videoWebsocketUrl(conversationId, auth.accessToken!));
         let sessionReady = false;
         ws.onopen = () => {
@@ -501,7 +514,9 @@ export const useVideoStore = defineStore("video", {
           this.signalSequence = 0;
           this.signalingSessionId = null;
         };
-        ws.onerror = () => reject(new Error("Incoming call listener failed to connect"));
+        ws.onerror = () => {
+          reject(new Error("Incoming call listener failed to connect"));
+        };
         ws.onmessage = async (event) => {
           const data = JSON.parse(event.data) as {
             type: "session" | "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
@@ -530,6 +545,24 @@ export const useVideoStore = defineStore("video", {
           if (data.sender_client_id && data.sender_client_id === this.clientId) {
             return;
           }
+
+          if (data.type === "offer" && !this.inCall && !this.isDialing) {
+            this.pendingRemoteOffer = data.payload as RTCSessionDescriptionInit;
+            this.hasIncomingCallIntent = true;
+            this.playIncomingRing = true;
+            this.playOutgoingRing = false;
+            this.statusMessage = "Incoming call...";
+            return;
+          }
+
+          if (data.type === "ready" && !this.inCall && !this.isDialing) {
+            this.hasIncomingCallIntent = true;
+            this.playIncomingRing = true;
+            this.playOutgoingRing = false;
+            this.statusMessage = "Incoming call...";
+            return;
+          }
+
           await this.handleSignal(data.type, data.payload);
         };
         ws.onclose = () => {
@@ -723,7 +756,6 @@ export const useVideoStore = defineStore("video", {
 
     async startCall(conversationId: number) {
       try {
-        console.log("[video] startCall", { conversationId });
         this.resetPeerState(true);
         this.status = "connecting";
         this.statusMessage = "Starting call...";
@@ -733,15 +765,9 @@ export const useVideoStore = defineStore("video", {
         this.playIncomingRing = false;
         this.hasIncomingCallIntent = false;
 
-        console.log("[video] ensureLocalStream starting", { conversationId });
         await this.ensureLocalStream();
-        console.log("[video] ensureLocalStream complete", { conversationId });
-        console.log("[video] connectSignaling starting", { conversationId });
         await this.connectSignaling(conversationId);
-        console.log("[video] connectSignaling complete", { conversationId });
-        console.log("[video] createPeerConnection starting", { conversationId });
         await this.createPeerConnection(conversationId);
-        console.log("[video] createPeerConnection complete", { conversationId });
 
         const offer = await this.peer!.createOffer();
         await this.peer!.setLocalDescription(offer);
@@ -755,8 +781,7 @@ export const useVideoStore = defineStore("video", {
 
     async joinCall(conversationId: number) {
       try {
-        console.log("[video] joinCall", { conversationId });
-        this.resetPeerState(true);
+        this.resetPeerState(true, true, true);
         this.status = "connecting";
         this.statusMessage = "Joining call...";
         this.callConversationId = conversationId;
@@ -764,18 +789,11 @@ export const useVideoStore = defineStore("video", {
         this.playOutgoingRing = false;
         this.playIncomingRing = false;
         this.hasIncomingCallIntent = false;
-        console.log("[video] ensureLocalStream starting", { conversationId });
         await this.ensureLocalStream();
-        console.log("[video] ensureLocalStream complete", { conversationId });
-        console.log("[video] connectSignaling starting", { conversationId });
         await this.connectSignaling(conversationId);
-        console.log("[video] connectSignaling complete", { conversationId });
-        console.log("[video] createPeerConnection starting", { conversationId });
         await this.createPeerConnection(conversationId);
-        console.log("[video] createPeerConnection complete", { conversationId });
 
         if (this.pendingRemoteOffer) {
-          console.log("[video] processing cached remote offer", { conversationId });
           await this.applyRemoteOffer(this.pendingRemoteOffer);
           this.pendingRemoteOffer = null;
           return;
@@ -795,28 +813,23 @@ export const useVideoStore = defineStore("video", {
       }
 
       const signalingUrl = videoWebsocketUrl(conversationId, auth.accessToken!);
-      console.log("[video] connectSignaling prepared URL", { conversationId, signalingUrl });
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN && this.callConversationId === conversationId) {
-        console.log("[video] reusing existing signaling socket", { conversationId });
         return;
       }
 
       this.closeSignalingSocket();
 
       await new Promise<void>((resolve, reject) => {
-        console.log("[video] creating signaling websocket", { conversationId, signalingUrl });
         const ws = new WebSocket(signalingUrl);
         let sessionReady = false;
         ws.onopen = () => {
-          console.log("[video] signaling websocket open", { conversationId });
           this.ws = ws;
           this.callConversationId = conversationId;
           this.signalSequence = 0;
           this.signalingSessionId = null;
         };
         ws.onerror = () => {
-          console.log("[video] signaling websocket error", { conversationId });
           // onclose often carries the useful code (4401/4403)
           window.setTimeout(() => {
             if (!this.ws) {
@@ -825,7 +838,6 @@ export const useVideoStore = defineStore("video", {
           }, 120);
         };
         ws.onmessage = async (event) => {
-          console.log("[video] signaling websocket message", { conversationId, data: event.data });
           const data = JSON.parse(event.data) as {
             type: "session" | "ready" | "offer" | "answer" | "ice" | "hangup" | "error";
             sender_id?: number;
@@ -853,11 +865,6 @@ export const useVideoStore = defineStore("video", {
           await this.handleSignal(data.type, data.payload);
         };
         ws.onclose = (event) => {
-          console.log("[video] signaling websocket close", {
-            conversationId,
-            code: event.code,
-            reason: event.reason,
-          });
           if (this.ws === ws) {
             this.ws = null;
             this.signalingSessionId = null;
@@ -879,7 +886,6 @@ export const useVideoStore = defineStore("video", {
       if (this.peer) return;
       const peer = new RTCPeerConnection(rtcConfig);
       this.peer = peer;
-      this.pendingIce = [];
 
       await this.initializeMediaE2eeScaffold();
 
@@ -895,7 +901,12 @@ export const useVideoStore = defineStore("video", {
         this.activateRuntimeMediaE2eePipeline();
         const stream = this.remoteStream ?? new MediaStream();
         this.remoteStream = stream;
-        event.streams[0]?.getTracks().forEach((track) => {
+
+        const incomingTracks = event.streams[0]?.getTracks().length
+          ? event.streams[0].getTracks()
+          : [event.track];
+
+        incomingTracks.forEach((track) => {
           if (!stream.getTracks().some((t) => t.id === track.id)) {
             stream.addTrack(track);
           }
@@ -960,9 +971,6 @@ export const useVideoStore = defineStore("video", {
         // Wait for explicit Join action before processing SDP.
         if (type === "offer") {
           this.pendingRemoteOffer = payload as RTCSessionDescriptionInit;
-          console.log("[video] cached remote offer until join", {
-            conversationId: this.callConversationId,
-          });
           return;
         }
       }
@@ -1044,7 +1052,6 @@ export const useVideoStore = defineStore("video", {
 
     async ensureLocalStream() {
       if (this.localStream) return;
-      console.log("[video] requesting local media");
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: {
@@ -1052,10 +1059,6 @@ export const useVideoStore = defineStore("video", {
           height: { ideal: 720 },
           frameRate: { ideal: 24, max: 30 },
         },
-      });
-      console.log("[video] local media acquired", {
-        audioTracks: this.localStream.getAudioTracks().length,
-        videoTracks: this.localStream.getVideoTracks().length,
       });
       this.micEnabled = true;
       this.cameraEnabled = true;
@@ -1083,7 +1086,7 @@ export const useVideoStore = defineStore("video", {
         this.sendSignal("hangup", { ended: true });
       }
 
-      this.resetPeerState(true);
+      this.resetPeerState(false);
       this.status = "ended";
       this.statusMessage = "Call ended";
       if (conversationId !== null) {

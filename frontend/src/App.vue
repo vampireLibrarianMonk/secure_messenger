@@ -71,7 +71,6 @@ const unreadByConversation = ref<Record<number, number>>({});
 const memberNamesByConversation = ref<Record<number, Record<number, string>>>({});
 const localVideoEl = ref<HTMLVideoElement | null>(null);
 const remoteVideoEl = ref<HTMLVideoElement | null>(null);
-const remoteVolume = ref(100);
 const fileInputEl = ref<HTMLInputElement | null>(null);
 const testLabBootstrap = ref<TestLabBootstrapResponse | null>(null);
 const testLabError = ref("");
@@ -473,13 +472,11 @@ function toggleVideoDiagnostics(event: Event) {
 
 async function startVideoCall() {
   if (!chat.activeConversationId) return;
-  console.log("[video] startCall entered", { conversationId: chat.activeConversationId });
   await video.startCall(chat.activeConversationId);
 }
 
 async function joinVideoCall() {
   if (!chat.activeConversationId) return;
-  console.log("[video] joinCall entered", { conversationId: chat.activeConversationId });
   await video.joinCall(chat.activeConversationId);
 }
 
@@ -494,12 +491,6 @@ function toggleMic() {
 
 function toggleCamera() {
   video.toggleCamera();
-}
-
-function updateRemoteVolume(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const nextVolume = Number.parseInt(input.value, 10);
-  remoteVolume.value = Number.isFinite(nextVolume) ? nextVolume : 100;
 }
 
 function triggerFilePicker() {
@@ -756,15 +747,6 @@ watch(
   (stream) => {
     if (!remoteVideoEl.value) return;
     remoteVideoEl.value.srcObject = stream;
-    remoteVideoEl.value.volume = remoteVolume.value / 100;
-  },
-);
-
-watch(
-  () => remoteVolume.value,
-  (volume) => {
-    if (!remoteVideoEl.value) return;
-    remoteVideoEl.value.volume = volume / 100;
   },
 );
 
@@ -1073,19 +1055,6 @@ onUnmounted(() => {
               <video ref="remoteVideoEl" autoplay playsinline></video>
               <span>Remote</span>
             </div>
-          </div>
-          <div class="video-volume-row">
-            <label for="remote-volume">Remote volume</label>
-            <input
-              id="remote-volume"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              :value="remoteVolume"
-              @input="updateRemoteVolume"
-            />
-            <span>{{ remoteVolume }}%</span>
           </div>
           <div class="video-actions">
             <button v-if="showStartCall" @click="startVideoCall">Start Call</button>

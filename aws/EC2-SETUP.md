@@ -359,6 +359,7 @@ On EC2:
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 docker logs --tail 100 secure-chat-backend
 docker exec -i secure-chat-backend python manage.py check
+docker exec -i secure-chat-backend python manage.py test messenger.tests.VideoSignalingHandshakeTests
 ```
 
 From browser:
@@ -373,6 +374,18 @@ Quick CLI validation:
 ```bash
 curl -I https://secure-chat.my-deployment.com/
 curl -i https://secure-chat.my-deployment.com/api/
+```
+
+If you want to run the focused Django regression tests for the video-call signaling workflow from inside the backend container:
+
+```bash
+docker exec -i secure-chat-backend python manage.py test messenger.tests.VideoSignalingHandshakeTests
+```
+
+To run the full Django test suite instead:
+
+```bash
+docker exec -i secure-chat-backend python manage.py test
 ```
 
 Expected:
@@ -449,6 +462,10 @@ Use this exact sequence after deployment changes:
 ```bash
 # 1) Verify expected container mounts
 docker inspect secure-chat-backend --format '{{json .Mounts}}'
+
+# 1b) Run backend Django checks/tests inside the container
+docker exec -i secure-chat-backend python manage.py check
+docker exec -i secure-chat-backend python manage.py test messenger.tests.VideoSignalingHandshakeTests
 
 # 2) Verify HTTPS/API health before UI tests
 curl -I https://secure-chat.my-deployment.com/
