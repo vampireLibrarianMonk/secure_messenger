@@ -47,9 +47,11 @@ const video = useVideoStore();
 const username = ref("");
 const password = ref("");
 const authError = ref("");
+const showLoginPassword = ref(false);
 
 const unlockPin = ref("");
 const unlockError = ref("");
+const showUnlockPin = ref(false);
 const inactivityInput = ref(security.inactivitySeconds);
 
 const draftMessage = ref("");
@@ -60,6 +62,8 @@ const createMembers = ref("");
 const newPasscode = ref("");
 const confirmPasscode = ref("");
 const passcodeMessage = ref("");
+const showNewPasscode = ref(false);
+const showConfirmPasscode = ref(false);
 const notificationsReady = ref(false);
 const refreshingConversations = ref(false);
 const nowTick = ref(Date.now());
@@ -67,6 +71,7 @@ const unreadByConversation = ref<Record<number, number>>({});
 const memberNamesByConversation = ref<Record<number, Record<number, string>>>({});
 const localVideoEl = ref<HTMLVideoElement | null>(null);
 const remoteVideoEl = ref<HTMLVideoElement | null>(null);
+const remoteVolume = ref(100);
 const fileInputEl = ref<HTMLInputElement | null>(null);
 const testLabBootstrap = ref<TestLabBootstrapResponse | null>(null);
 const testLabError = ref("");
@@ -468,11 +473,13 @@ function toggleVideoDiagnostics(event: Event) {
 
 async function startVideoCall() {
   if (!chat.activeConversationId) return;
+  console.log("[video] startCall entered", { conversationId: chat.activeConversationId });
   await video.startCall(chat.activeConversationId);
 }
 
 async function joinVideoCall() {
   if (!chat.activeConversationId) return;
+  console.log("[video] joinCall entered", { conversationId: chat.activeConversationId });
   await video.joinCall(chat.activeConversationId);
 }
 
@@ -487,6 +494,12 @@ function toggleMic() {
 
 function toggleCamera() {
   video.toggleCamera();
+}
+
+function updateRemoteVolume(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const nextVolume = Number.parseInt(input.value, 10);
+  remoteVolume.value = Number.isFinite(nextVolume) ? nextVolume : 100;
 }
 
 function triggerFilePicker() {
@@ -743,6 +756,15 @@ watch(
   (stream) => {
     if (!remoteVideoEl.value) return;
     remoteVideoEl.value.srcObject = stream;
+    remoteVideoEl.value.volume = remoteVolume.value / 100;
+  },
+);
+
+watch(
+  () => remoteVolume.value,
+  (volume) => {
+    if (!remoteVideoEl.value) return;
+    remoteVideoEl.value.volume = volume / 100;
   },
 );
 
@@ -897,7 +919,17 @@ onUnmounted(() => {
     <section v-if="!auth.isAuthenticated" class="card auth-screen">
       <h2>Sign in</h2>
       <input v-model="username" placeholder="Username" />
-      <input v-model="password" type="password" placeholder="Password" @keydown.enter="submitAuth" />
+      <div class="password-field-row">
+        <input
+          v-model="password"
+          :type="showLoginPassword ? 'text' : 'password'"
+          placeholder="Password"
+          @keydown.enter="submitAuth"
+        />
+        <button class="ghost password-toggle" type="button" @click="showLoginPassword = !showLoginPassword">
+          {{ showLoginPassword ? "🙈" : "👁" }}
+        </button>
+      </div>
       <button @click="submitAuth">Login</button>
       <p v-if="authError" class="error">{{ authError }}</p>
     </section>
@@ -905,7 +937,17 @@ onUnmounted(() => {
     <section v-else-if="security.locked" class="card lock-screen">
       <h2>Session Locked</h2>
       <p>Enter passcode to restore in-memory keys and continue. Default passcode is <strong>1234</strong>.</p>
-      <input v-model="unlockPin" type="password" placeholder="Passcode" @keydown.enter="unlock" />
+      <div class="password-field-row">
+        <input
+          v-model="unlockPin"
+          :type="showUnlockPin ? 'text' : 'password'"
+          placeholder="Passcode"
+          @keydown.enter="unlock"
+        />
+        <button class="ghost password-toggle" type="button" @click="showUnlockPin = !showUnlockPin">
+          {{ showUnlockPin ? "🙈" : "👁" }}
+        </button>
+      </div>
       <button @click="unlock">Unlock</button>
       <button class="ghost" @click="resetLockedSession">Reset locked session</button>
       <p v-if="unlockError" class="error">{{ unlockError }}</p>
@@ -952,20 +994,30 @@ onUnmounted(() => {
 
         <div class="new-conversation">
           <h4>Change lock passcode</h4>
-          <input
-            v-model="newPasscode"
-            type="password"
-            placeholder="New passcode"
-            autocomplete="new-password"
-            name="new-lock-passcode"
-          />
-          <input
-            v-model="confirmPasscode"
-            type="password"
-            placeholder="Confirm passcode"
-            autocomplete="new-password"
-            name="confirm-lock-passcode"
-          />
+          <div class="password-field-row">
+            <input
+              v-model="newPasscode"
+              :type="showNewPasscode ? 'text' : 'password'"
+              placeholder="New passcode"
+              autocomplete="new-password"
+              name="new-lock-passcode"
+            />
+            <button class="ghost password-toggle" type="button" @click="showNewPasscode = !showNewPasscode">
+              {{ showNewPasscode ? "🙈" : "👁" }}
+            </button>
+          </div>
+          <div class="password-field-row">
+            <input
+              v-model="confirmPasscode"
+              :type="showConfirmPasscode ? 'text' : 'password'"
+              placeholder="Confirm passcode"
+              autocomplete="new-password"
+              name="confirm-lock-passcode"
+            />
+            <button class="ghost password-toggle" type="button" @click="showConfirmPasscode = !showConfirmPasscode">
+              {{ showConfirmPasscode ? "🙈" : "👁" }}
+            </button>
+          </div>
           <button @click="updatePasscode">Update passcode</button>
           <p v-if="passcodeMessage" class="muted">{{ passcodeMessage }}</p>
         </div>
@@ -1021,6 +1073,19 @@ onUnmounted(() => {
               <video ref="remoteVideoEl" autoplay playsinline></video>
               <span>Remote</span>
             </div>
+          </div>
+          <div class="video-volume-row">
+            <label for="remote-volume">Remote volume</label>
+            <input
+              id="remote-volume"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              :value="remoteVolume"
+              @input="updateRemoteVolume"
+            />
+            <span>{{ remoteVolume }}%</span>
           </div>
           <div class="video-actions">
             <button v-if="showStartCall" @click="startVideoCall">Start Call</button>
