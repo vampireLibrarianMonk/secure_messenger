@@ -15,6 +15,7 @@ interface VideoState {
   loopbackPeer: RTCPeerConnection | null;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  pendingRemoteOffer: RTCSessionDescriptionInit | null;
   callConversationId: number | null;
   status: CallStatus;
   statusMessage: string;
@@ -92,6 +93,7 @@ export const useVideoStore = defineStore("video", {
     loopbackPeer: null,
     localStream: null,
     remoteStream: null,
+    pendingRemoteOffer: null,
     callConversationId: null,
     status: "idle",
     statusMessage: "Ready",
@@ -174,6 +176,7 @@ export const useVideoStore = defineStore("video", {
       this.remoteStream?.getTracks().forEach((track) => track.stop());
       this.localStream = null;
       this.remoteStream = null;
+      this.pendingRemoteOffer = null;
 
       this.pendingIce = [];
       this.hasIncomingCallIntent = false;
@@ -770,6 +773,14 @@ export const useVideoStore = defineStore("video", {
         console.log("[video] createPeerConnection starting", { conversationId });
         await this.createPeerConnection(conversationId);
         console.log("[video] createPeerConnection complete", { conversationId });
+
+        if (this.pendingRemoteOffer) {
+          console.log("[video] processing cached remote offer", { conversationId });
+          await this.applyRemoteOffer(this.pendingRemoteOffer);
+          this.pendingRemoteOffer = null;
+          return;
+        }
+
         this.sendSignal("ready", { ok: true });
       } catch (error) {
         this.status = "error";
@@ -924,6 +935,21 @@ export const useVideoStore = defineStore("video", {
       this.callConversationId = conversationId;
     },
 
+    async applyRemoteOffer(offer: RTCSessionDescriptionInit) {
+      if (!this.peer) return;
+
+      this.statusMessage = "Offer received. Creating answer...";
+      await this.peer.setRemoteDescription(offer);
+      const answer = await this.peer.createAnswer();
+      await this.peer.setLocalDescription(answer);
+      this.sendSignal("answer", answer);
+
+      for (const ice of this.pendingIce) {
+        await this.peer.addIceCandidate(ice);
+      }
+      this.pendingIce = [];
+    },
+
     async handleSignal(type: "ready" | "offer" | "answer" | "ice" | "hangup", payload?: unknown) {
       if ((type === "ready" || type === "offer") && !this.inCall && !this.isDialing) {
         this.hasIncomingCallIntent = true;
@@ -933,6 +959,10 @@ export const useVideoStore = defineStore("video", {
 
         // Wait for explicit Join action before processing SDP.
         if (type === "offer") {
+          this.pendingRemoteOffer = payload as RTCSessionDescriptionInit;
+          console.log("[video] cached remote offer until join", {
+            conversationId: this.callConversationId,
+          });
           return;
         }
       }
@@ -964,16 +994,7 @@ export const useVideoStore = defineStore("video", {
       }
 
       if (type === "offer") {
-        this.statusMessage = "Offer received. Creating answer...";
-        await this.peer.setRemoteDescription(payload as RTCSessionDescriptionInit);
-        const answer = await this.peer.createAnswer();
-        await this.peer.setLocalDescription(answer);
-        this.sendSignal("answer", answer);
-
-        for (const ice of this.pendingIce) {
-          await this.peer.addIceCandidate(ice);
-        }
-        this.pendingIce = [];
+        await this.applyRemoteOffer(payload as RTCSessionDescriptionInit);
         return;
       }
 
