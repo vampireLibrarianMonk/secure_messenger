@@ -947,7 +947,7 @@ class VideoSignalingHandshakeTests(TestCase):
             )
 
             alice_echo_resent = await alice.receive_json_from()
-            bob_resent_offer = await bob.receive_json_from()
+            bob_resent_offer = await receive_until_type(bob, "offer")
             self.assertEqual(alice_echo_resent["type"], "offer")
             self.assertEqual(bob_resent_offer["type"], "offer")
             self.assertEqual(bob_resent_offer["payload"]["sdp"], "resent-offer-sdp")

@@ -106,6 +106,19 @@ let knownMessageIds = new Set<number>();
 let previousConversationIds = new Set<number>();
 let outgoingRingTimer: number | null = null;
 let incomingRingTimer: number | null = null;
+let sharedAudioContext: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  const Impl = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Impl) return null;
+  if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+    sharedAudioContext = new Impl();
+  }
+  if (sharedAudioContext.state === "suspended") {
+    sharedAudioContext.resume();
+  }
+  return sharedAudioContext;
+}
 
 const notificationSoundOptions = [
   { value: "chime", label: "Digital Chime" },
@@ -201,9 +214,8 @@ const secondsUntilLock = computed(() => {
 
 function playPattern(steps: Array<{ frequency: number; durationMs: number; delayMs?: number }>) {
   try {
-    const AudioContextImpl = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextImpl) return;
-    const context = new AudioContextImpl();
+    const context = getAudioContext();
+    if (!context) return;
 
     steps.forEach((step) => {
       const startAt = context.currentTime + ((step.delayMs ?? 0) / 1000);
@@ -1073,6 +1085,16 @@ onUnmounted(() => {
     window.clearInterval(countdownTimer);
     countdownTimer = null;
   }
+});
+
+defineExpose({
+  playNamedSound,
+  playPattern,
+  triggerNotification,
+  notificationsReady,
+  notificationPreferences,
+  notificationSoundOptions,
+  videoRingSoundOptions,
 });
 </script>
 

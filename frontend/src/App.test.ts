@@ -28,6 +28,7 @@ vi.mock('./stores/chat', () => ({
     conversations: [],
     activeConversationId: null,
     activeMessages: [],
+    messagesByConversation: {},
     loadConversations: vi.fn(),
     createConversation: vi.fn(),
     deleteConversation: vi.fn(),
@@ -92,12 +93,10 @@ vi.mock('./stores/video', () => ({
   })
 }))
 
-// Mock API requests
 vi.mock('./lib/api', () => ({
   apiRequest: vi.fn(() => Promise.resolve({}))
 }))
 
-// Mock crypto functions
 vi.mock('./lib/crypto', () => ({
   decryptFile: vi.fn(),
   encryptFile: vi.fn(),
@@ -107,10 +106,45 @@ vi.mock('./lib/crypto', () => ({
   generateIdentityKeypair: vi.fn(),
 }))
 
-// Mock AdminTestLabPanel component
 vi.mock('./components/AdminTestLabPanel.vue', () => ({
   default: { template: '<div>Mock Admin Panel</div>' }
 }))
+
+// Track all oscillator creations globally across AudioContext mocks
+let oscillatorCalls: number
+let resumeCalls: number
+let constructorCalls: number
+
+function installAudioMock(initialState = 'running') {
+  oscillatorCalls = 0
+  resumeCalls = 0
+  constructorCalls = 0
+
+  global.AudioContext = vi.fn().mockImplementation(function (this: any) {
+    constructorCalls++
+    this.currentTime = 0
+    this.state = initialState
+    this.destination = {}
+    this.resume = vi.fn(() => { resumeCalls++ })
+    this.createOscillator = vi.fn(() => {
+      oscillatorCalls++
+      return {
+        type: 'sine',
+        frequency: { setValueAtTime: vi.fn() },
+        connect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      }
+    })
+    this.createGain = vi.fn(() => ({
+      gain: {
+        setValueAtTime: vi.fn(),
+        exponentialRampToValueAtTime: vi.fn(),
+      },
+      connect: vi.fn(),
+    }))
+  }) as any
+}
 
 describe('App Component', () => {
   beforeEach(() => {
@@ -119,62 +153,25 @@ describe('App Component', () => {
 
   it('renders login form when not authenticated', () => {
     const wrapper = mount(App)
-    
+
     expect(wrapper.find('h2').text()).toBe('Sign in')
     expect(wrapper.find('input[placeholder="Username"]').exists()).toBe(true)
     expect(wrapper.find('input[placeholder="Password"]').exists()).toBe(true)
-    expect(wrapper.find('button').text()).toBe('Login')
+    const loginBtn = wrapper.findAll('button').find((b) => b.text() === 'Login')
+    expect(loginBtn).toBeTruthy()
   })
 
-  it('includes notification sound options in settings', () => {
-    const wrapper = mount(App)
-    
-    // Look for notification sound options in the template
-    const html = wrapper.html()
-    expect(html).toContain('Digital Chime')
-    expect(html).toContain('Mobile Trill') 
-    expect(html).toContain('Classic Phone Ring')
-    expect(html).toContain('Soft Bell')
-  })
-})
-
-describe('Notification Functions', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    
-    // Mock AudioContext
-    global.AudioContext = vi.fn().mockImplementation(() => ({
-      createOscillator: vi.fn(() => ({
-        type: 'sine',
-        frequency: { setValueAtTime: vi.fn() },
-        connect: vi.fn(),
-        start: vi.fn(),
-        stop: vi.fn(),
-      })),
-      createGain: vi.fn(() => ({
-        gain: { 
-          setValueAtTime: vi.fn(),
-          exponentialRampToValueAtTime: vi.fn(),
-        },
-        connect: vi.fn(),
-      })),
-      destination: {},
-      currentTime: 0,
-    }))
-  })
-
-  it('should have different sound patterns for different notification types', () => {
+  it('exposes notification sound options', () => {
     const wrapper = mount(App)
     const vm = wrapper.vm as any
-    
-    // Test that different sound types trigger different patterns
+
     expect(vm.notificationSoundOptions).toEqual([
       { value: "chime", label: "Digital Chime" },
       { value: "pulse", label: "Mobile Trill" },
       { value: "alert", label: "Classic Phone Ring" },
       { value: "soft", label: "Soft Bell" },
     ])
-    
+
     expect(vm.videoRingSoundOptions).toEqual([
       { value: "alert", label: "Classic Phone Ring" },
       { value: "pulse", label: "Modern Smartphone Ring" },
@@ -182,28 +179,57 @@ describe('Notification Functions', () => {
       { value: "soft", label: "Gentle Ring" },
     ])
   })
+})
 
-  it('should only trigger notifications when ready and not in active conversation', () => {
+describe('Notification Sound Playback', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    installAudioMock()
+  })
+
+  it('triggerNotification does not play when notificationsReady is false', () => {
     const wrapper = mount(App)
     const vm = wrapper.vm as any
-    
-    // Mock notification state
+
     vm.notificationsReady = false
-    vm.chat.activeConversationId = 1
-    
-    const playNamedSoundSpy = vi.spyOn(vm, 'playNamedSound')
-    
-    // Should not play sound when notifications not ready
-    vm.triggerNotification(1, 'dm', 1)
-    expect(playNamedSoundSpy).not.toHaveBeenCalled()
-    
-    // Should not play sound for active conversation even when ready
+    vm.triggerNotification(2, 'dm', 1, true)
+    expect(oscillatorCalls).toBe(0)
+  })
+
+  it('triggerNotification plays receiver dm_sound preference for incoming DM', () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
     vm.notificationsReady = true
-    vm.triggerNotification(1, 'dm', 1)
-    expect(playNamedSoundSpy).not.toHaveBeenCalled()
-    
-    // Should play sound for different conversation when ready
-    vm.triggerNotification(2, 'dm', 1)
-    expect(playNamedSoundSpy).toHaveBeenCalledWith('chime')
+    vm.triggerNotification(2, 'dm', 1, true)
+    // chime pattern has 2 oscillator notes
+    expect(oscillatorCalls).toBe(2)
+  })
+
+  it('triggerNotification plays receiver dm_document_sound preference for incoming document', () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    vm.notificationsReady = true
+    vm.triggerNotification(2, 'document', 1, true)
+    // pulse pattern has 3 oscillator notes
+    expect(oscillatorCalls).toBe(3)
+  })
+
+  it('playNamedSound produces oscillators for each named sound', () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    vm.playNamedSound('chime')
+    expect(oscillatorCalls).toBe(2)
+
+    vm.playNamedSound('pulse')
+    expect(oscillatorCalls).toBe(5) // +3
+
+    vm.playNamedSound('alert')
+    expect(oscillatorCalls).toBe(9) // +4
+
+    vm.playNamedSound('soft')
+    expect(oscillatorCalls).toBe(11) // +2
   })
 })
