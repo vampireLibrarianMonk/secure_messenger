@@ -56,6 +56,8 @@ interface VideoState {
   mediaE2eeKeyRotatedAt: number | null;
   mediaE2eeRuntimeTransformClass: "none" | "xor_obfuscation_experimental";
   mediaE2eeRuntimeAttachmentCount: number;
+  signalingTestSocket: WebSocket | null;
+  signalingTestTimeout: number | null;
 }
 
 function parseIceServers(): RTCIceServer[] {
@@ -134,6 +136,8 @@ export const useVideoStore = defineStore("video", {
     mediaE2eeKeyRotatedAt: null,
     mediaE2eeRuntimeTransformClass: "none",
     mediaE2eeRuntimeAttachmentCount: 0,
+    signalingTestSocket: null,
+    signalingTestTimeout: null,
   }),
   getters: {
     inCall(state): boolean {
@@ -593,13 +597,21 @@ export const useVideoStore = defineStore("video", {
       this.statusMessage = "Running signaling test...";
 
       const testClientId = `signal-test-${crypto.randomUUID()}`;
+      this.signalingTestSocket?.close();
+      if (this.signalingTestTimeout !== null) {
+        window.clearTimeout(this.signalingTestTimeout);
+      }
+
       const ws = new WebSocket(videoWebsocketUrl(conversationId, auth.accessToken));
+      this.signalingTestSocket = ws;
+      this.signalingTestTimeout = null;
 
       await new Promise<void>((resolve, reject) => {
         const timeout = window.setTimeout(() => {
           ws.close();
           reject(new Error("Signaling test timeout (no echo received)"));
         }, 5000);
+        this.signalingTestTimeout = timeout;
         let settled = false;
         let signalingSessionId: string | null = null;
 
@@ -607,6 +619,10 @@ export const useVideoStore = defineStore("video", {
           if (settled) return;
           settled = true;
           window.clearTimeout(timeout);
+          this.signalingTestTimeout = null;
+          if (this.signalingTestSocket === ws) {
+            this.signalingTestSocket = null;
+          }
           try {
             ws.close();
           } catch {
@@ -619,6 +635,10 @@ export const useVideoStore = defineStore("video", {
           if (settled) return;
           settled = true;
           window.clearTimeout(timeout);
+          this.signalingTestTimeout = null;
+          if (this.signalingTestSocket === ws) {
+            this.signalingTestSocket = null;
+          }
           ws.close();
           resolve();
         };
@@ -684,6 +704,27 @@ export const useVideoStore = defineStore("video", {
           this.status = "error";
           this.statusMessage = error instanceof Error ? error.message : "Signaling test failed";
         });
+    },
+
+    endSignalingTest() {
+      if (this.signalingTestTimeout !== null) {
+        window.clearTimeout(this.signalingTestTimeout);
+        this.signalingTestTimeout = null;
+      }
+
+      if (this.signalingTestSocket) {
+        try {
+          this.signalingTestSocket.close();
+        } catch {
+          // ignore
+        }
+      }
+      this.signalingTestSocket = null;
+
+      if (this.status === "testing") {
+        this.status = "ended";
+        this.statusMessage = "Signaling test ended.";
+      }
     },
 
     async startLoopbackTest() {

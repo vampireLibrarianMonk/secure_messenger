@@ -37,6 +37,116 @@ class AuthFlowTests(TestCase):
         self.assertEqual(login.status_code, 200)
         self.assertIn("access", login.data)
 
+    def test_change_password_success_requires_current_password(self):
+        User.objects.create_user(username="alice", email="alice@example.com", password="testpass123")
+        login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "testpass123"},
+            format="json",
+        )
+        token = login.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpass123",
+                "new_password": "NewStrongPass123_",
+                "confirm_new_password": "NewStrongPass123_",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        self.client.credentials()
+        old_login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "testpass123"},
+            format="json",
+        )
+        self.assertEqual(old_login.status_code, 401)
+
+        new_login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "NewStrongPass123_"},
+            format="json",
+        )
+        self.assertEqual(new_login.status_code, 200)
+
+    def test_change_password_rejects_wrong_current_password(self):
+        User.objects.create_user(username="alice", password="testpass123")
+        login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "testpass123"},
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "wrongpass",
+                "new_password": "NewStrongPass123_",
+                "confirm_new_password": "NewStrongPass123_",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("current_password", response.data)
+
+    def test_change_password_rejects_mismatch(self):
+        User.objects.create_user(username="alice", password="testpass123")
+        login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "testpass123"},
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpass123",
+                "new_password": "NewStrongPass123_",
+                "confirm_new_password": "MismatchPass123_",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("confirm_new_password", response.data)
+
+    def test_notification_preferences_default_and_update(self):
+        User.objects.create_user(username="alice", password="testpass123")
+        login = self.client.post(
+            "/api/auth/login/",
+            {"username": "alice", "password": "testpass123"},
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+        default_response = self.client.get("/api/auth/notification-preferences/")
+        self.assertEqual(default_response.status_code, 200)
+        self.assertEqual(default_response.data["dm_sound"], "chime")
+        self.assertEqual(default_response.data["dm_document_sound"], "pulse")
+        self.assertEqual(default_response.data["video_ring_sound"], "alert")
+        self.assertEqual(default_response.data["chat_leave_sound"], "soft")
+
+        update_response = self.client.put(
+            "/api/auth/notification-preferences/",
+            {
+                "dm_sound": "soft",
+                "dm_document_sound": "alert",
+                "video_ring_sound": "pulse",
+                "chat_leave_sound": "chime",
+            },
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.data["dm_sound"], "soft")
+        self.assertEqual(update_response.data["dm_document_sound"], "alert")
+        self.assertEqual(update_response.data["video_ring_sound"], "pulse")
+        self.assertEqual(update_response.data["chat_leave_sound"], "chime")
+
 
 class MessagingTests(TestCase):
     def setUp(self):
@@ -807,7 +917,6 @@ class VideoSignalingHandshakeTests(TestCase):
                 }
             )
 
-            # Sender sees echoed self-message, peer sees first offer.
             alice_echo = await alice.receive_json_from()
             bob_first_offer = await bob.receive_json_from()
             self.assertEqual(alice_echo["type"], "offer")
@@ -847,3 +956,74 @@ class VideoSignalingHandshakeTests(TestCase):
             await bob.disconnect()
 
         async_to_sync(scenario)()
+
+
+class ConversationLeaveTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.alice = User.objects.create_user(username="alice", password="testpass123")
+        self.bob = User.objects.create_user(username="bob", password="testpass123")
+        self.charlie = User.objects.create_user(username="charlie", password="testpass123")
+
+        # Authenticate as Alice by default
+        token = self.client.post(
+            "/api/auth/login/", {"username": "alice", "password": "testpass123"}, format="json"
+        ).data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    def test_leave_conversation_success_for_member(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.alice)
+        ConversationMember.objects.create(conversation=conversation, user=self.alice)
+        ConversationMember.objects.create(conversation=conversation, user=self.bob)
+
+        response = self.client.post(f"/api/conversations/{conversation.id}/leave/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Left conversation successfully", response.data["detail"])
+        
+        # Verify Alice is no longer a member
+        self.assertFalse(ConversationMember.objects.filter(conversation=conversation, user=self.alice).exists())
+        
+        # Verify Bob is still a member  
+        self.assertTrue(ConversationMember.objects.filter(conversation=conversation, user=self.bob).exists())
+
+    def test_leave_conversation_deletes_user_messages(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.alice)
+        ConversationMember.objects.create(conversation=conversation, user=self.alice)
+        ConversationMember.objects.create(conversation=conversation, user=self.bob)
+
+        # Alice sends messages
+        alice_msg1 = MessageEnvelope.objects.create(
+            conversation=conversation, sender=self.alice, ciphertext="alice1", nonce=b64_bytes(12), aad="", message_index=1
+        )
+        alice_msg2 = MessageEnvelope.objects.create(
+            conversation=conversation, sender=self.alice, ciphertext="alice2", nonce=b64_bytes(12), aad="", message_index=2
+        )
+        
+        # Bob sends a message
+        bob_msg = MessageEnvelope.objects.create(
+            conversation=conversation, sender=self.bob, ciphertext="bob1", nonce=b64_bytes(12), aad="", message_index=3
+        )
+
+        response = self.client.post(f"/api/conversations/{conversation.id}/leave/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["messages_deleted"], 2)
+
+        # Verify Alice's messages are deleted
+        self.assertFalse(MessageEnvelope.objects.filter(id=alice_msg1.id).exists())
+        self.assertFalse(MessageEnvelope.objects.filter(id=alice_msg2.id).exists())
+        
+        # Verify Bob's message remains
+        self.assertTrue(MessageEnvelope.objects.filter(id=bob_msg.id).exists())
+
+    def test_leave_conversation_auto_deletes_when_no_members_remain(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.alice)
+        ConversationMember.objects.create(conversation=conversation, user=self.alice)
+
+        response = self.client.post(f"/api/conversations/{conversation.id}/leave/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["conversation_deleted"])
+
+        # Verify conversation is deleted
+        self.assertFalse(Conversation.objects.filter(id=conversation.id).exists())
+
+

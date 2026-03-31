@@ -8,6 +8,13 @@ interface AuthState {
   user: { id: number; username: string; email: string } | null;
 }
 
+export interface NotificationPreferencePayload {
+  dm_sound: string;
+  dm_document_sound: string;
+  video_ring_sound: string;
+  chat_leave_sound: string;
+}
+
 const ACCESS_KEY = "sm_access";
 const REFRESH_KEY = "sm_refresh";
 
@@ -40,6 +47,38 @@ export const useAuthStore = defineStore("auth", {
     async loadMe() {
       if (!this.accessToken) return;
       this.user = await apiRequest("/auth/me/", { token: this.accessToken });
+    },
+    async changePassword(currentPassword: string, newPassword: string, confirmNewPassword: string) {
+      if (!this.accessToken) {
+        throw new Error("Not authenticated");
+      }
+      return apiRequest<{ detail: string }>("/auth/change-password/", {
+        method: "POST",
+        token: this.accessToken,
+        body: {
+          current_password: currentPassword,
+          new_password: newPassword,
+          confirm_new_password: confirmNewPassword,
+        },
+      });
+    },
+    async loadNotificationPreferences() {
+      if (!this.accessToken) {
+        throw new Error("Not authenticated");
+      }
+      return apiRequest<NotificationPreferencePayload>("/auth/notification-preferences/", {
+        token: this.accessToken,
+      });
+    },
+    async saveNotificationPreferences(preferences: NotificationPreferencePayload) {
+      if (!this.accessToken) {
+        throw new Error("Not authenticated");
+      }
+      return apiRequest<NotificationPreferencePayload>("/auth/notification-preferences/", {
+        method: "PUT",
+        token: this.accessToken,
+        body: preferences,
+      });
     },
     async logout() {
       if (this.accessToken && this.refreshToken) {

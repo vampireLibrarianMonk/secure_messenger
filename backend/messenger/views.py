@@ -25,6 +25,7 @@ from .models import (
     Device,
     MessageEnvelope,
     SessionEvent,
+    UserNotificationPreference,
     Workspace,
     WorkspaceMembership,
 )
@@ -35,7 +36,9 @@ from .serializers import (
     ConversationSerializer,
     DeviceSerializer,
     MessageEnvelopeSerializer,
+    PasswordChangeSerializer,
     SessionEventSerializer,
+    UserNotificationPreferenceSerializer,
     UserRegistrationSerializer,
     WorkspaceMembershipSerializer,
     WorkspaceSerializer,
@@ -308,6 +311,40 @@ class MeView(APIView):
         )
 
 
+class PasswordChangeView(APIView):
+    def post(self, request):
+        serializer = PasswordChangeSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        request.user.set_password(serializer.validated_data["new_password"])
+        request.user.save(update_fields=["password"])
+
+        SessionEvent.objects.create(
+            user=request.user,
+            event_type=SessionEvent.EVENT_REVOKE,
+            metadata={"category": "account_security", "action": "password_changed"},
+        )
+
+        return Response({"detail": "Login password updated successfully. Please sign in again."}, status=status.HTTP_200_OK)
+
+
+class NotificationPreferenceView(APIView):
+    def get_object(self, user: User) -> UserNotificationPreference:
+        preference, _ = UserNotificationPreference.objects.get_or_create(user=user)
+        return preference
+
+    def get(self, request):
+        preference = self.get_object(request.user)
+        return Response(UserNotificationPreferenceSerializer(preference).data)
+
+    def put(self, request):
+        preference = self.get_object(request.user)
+        serializer = UserNotificationPreferenceSerializer(preference, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class DeviceViewSet(viewsets.ModelViewSet):
     serializer_class = DeviceSerializer
 
@@ -444,12 +481,60 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="leave")
     def leave(self, request, pk=None):
         conversation = self.get_object()
-        deleted, _ = ConversationMember.objects.filter(conversation=conversation, user=request.user).delete()
-        if deleted == 0:
+        
+        # Check if user is a member
+        member_exists = ConversationMember.objects.filter(conversation=conversation, user=request.user).exists()
+        if not member_exists:
             return Response({"detail": "Not a member."}, status=status.HTTP_400_BAD_REQUEST)
-        if conversation.kind == Conversation.TYPE_GROUP:
+        
+        # Delete all messages authored by the leaving user
+        deleted_messages = MessageEnvelope.objects.filter(
+            conversation=conversation, 
+            sender=request.user
+        ).delete()[0]
+        
+        # Delete all attachments uploaded by the leaving user 
+        deleted_attachments = Attachment.objects.filter(
+            message__conversation=conversation,
+            uploaded_by=request.user
+        ).delete()[0]
+        
+        # Remove user from conversation
+        ConversationMember.objects.filter(conversation=conversation, user=request.user).delete()
+        
+        # Check if any members remain - if not, delete the conversation
+        remaining_members = ConversationMember.objects.filter(conversation=conversation).count()
+        conversation_deleted = False
+        if remaining_members == 0:
+            conversation.delete()
+            conversation_deleted = True
+        
+        # Record group epoch change if applicable
+        if conversation.kind == Conversation.TYPE_GROUP and not conversation_deleted:
             _record_group_epoch(request.user, conversation, "member_left")
-        return Response({"detail": "Left conversation."}, status=status.HTTP_200_OK)
+            
+        # Notify other members via websocket about the content changes
+        if not conversation_deleted:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"conversation_{conversation.id}",
+                {
+                    "type": "chat.member_left",
+                    "user_id": request.user.id,
+                    "messages_deleted": deleted_messages,
+                    "attachments_deleted": deleted_attachments,
+                },
+            )
+        
+        return Response({
+            "detail": "Left conversation successfully.",
+            "messages_deleted": deleted_messages,
+            "attachments_deleted": deleted_attachments,
+            "conversation_deleted": conversation_deleted,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="nuke")
     def nuke(self, request, pk=None):
@@ -790,6 +875,8 @@ __all__ = [
     "RegisterView",
     "LogoutView",
     "MeView",
+    "PasswordChangeView",
+    "NotificationPreferenceView",
     "TokenObtainPairView",
     "TokenRefreshView",
     "DeviceViewSet",

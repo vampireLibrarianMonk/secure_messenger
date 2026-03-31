@@ -125,3 +125,22 @@ class SessionEvent(TimeStampedModel):
     device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="session_events")
     event_type = models.CharField(max_length=16, choices=EVENT_CHOICES)
     metadata = models.JSONField(default=dict, blank=True)
+
+
+class UserNotificationPreference(TimeStampedModel):
+    SOUND_CHIME = "chime"
+    SOUND_PULSE = "pulse"
+    SOUND_ALERT = "alert"
+    SOUND_SOFT = "soft"
+    SOUND_CHOICES = (
+        (SOUND_CHIME, "Chime"),
+        (SOUND_PULSE, "Pulse"),
+        (SOUND_ALERT, "Alert"),
+        (SOUND_SOFT, "Soft"),
+    )
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notification_preferences")
+    dm_sound = models.CharField(max_length=32, choices=SOUND_CHOICES, default=SOUND_CHIME)
+    dm_document_sound = models.CharField(max_length=32, choices=SOUND_CHOICES, default=SOUND_PULSE)
+    video_ring_sound = models.CharField(max_length=32, choices=SOUND_CHOICES, default=SOUND_ALERT)
+    chat_leave_sound = models.CharField(max_length=32, choices=SOUND_CHOICES, default=SOUND_SOFT)

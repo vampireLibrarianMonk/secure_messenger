@@ -249,6 +249,19 @@ body {
   margin: 0 0 1rem;
 }
 
+.conversation-select-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #d1d5db;
+  font-size: 0.85rem;
+}
+
+.conversation-select {
+  width: 100%;
+  min-height: 180px;
+  margin-bottom: 0.8rem;
+}
+
 .conversation-btn {
   width: 100%;
   text-align: left;
@@ -259,6 +272,19 @@ body {
 
 .chat { display: flex; flex-direction: column; min-height: 70vh; }
 .chat-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+
+.status-messages {
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #374151;
+}
+
+.status-messages p {
+  margin: 0;
+  font-size: 0.85rem;
+}
 .video-panel {
   margin-top: 0.8rem;
   padding: 0.9rem;
@@ -287,6 +313,10 @@ body {
   gap: 0.7rem;
 }
 
+.video-grid.single-pane {
+  grid-template-columns: 1fr;
+}
+
 .video-frame {
   background: #020617;
   border: 1px solid #334155;
@@ -309,11 +339,28 @@ body {
   font-size: 0.8rem;
 }
 
+.video-pane-hidden {
+  min-height: 120px;
+  border: 1px dashed #475569;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  background: rgba(15, 23, 42, 0.6);
+}
+
 .video-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.7rem;
+}
+
+.video-visibility-note {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
 }
 
 .video-debug {
@@ -408,6 +455,55 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.inline-preference-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+
+.new-conversation label {
+  display: block;
+  margin-bottom: 0.6rem;
+}
+
+.settings-collapsible {
+  border-top: 1px solid #374151;
+  padding-top: 0.5rem;
+}
+
+.settings-collapsible > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #d1d5db;
+  list-style: none;
+}
+
+.settings-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-collapsible > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.35rem;
+  transition: transform 0.15s ease;
+}
+
+.settings-collapsible[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.settings-content {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.settings-content h4 {
+  margin: 0.4rem 0 0.2rem;
 }
 
 .password-toggle {

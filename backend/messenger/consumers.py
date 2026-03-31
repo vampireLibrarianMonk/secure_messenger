@@ -82,6 +82,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def chat_message(self, event):
         await self.send(text_data=json.dumps({"type": "message", "payload": event["message"]}))
 
+    async def chat_member_left(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "member_left",
+            "payload": {
+                "user_id": event["user_id"],
+                "messages_deleted": event["messages_deleted"],
+                "attachments_deleted": event["attachments_deleted"],
+            }
+        }))
+
     @database_sync_to_async
     def _is_member(self, user_id: int, conversation_id: int) -> bool:
         return ConversationMember.objects.filter(conversation_id=conversation_id, user_id=user_id).exists()

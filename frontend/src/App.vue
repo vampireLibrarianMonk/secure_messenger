@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useAuthStore } from "./stores/auth";
+import { useAuthStore, type NotificationPreferencePayload } from "./stores/auth";
 import { useChatStore } from "./stores/chat";
 import { useSecurityStore } from "./stores/security";
 import { useVideoStore } from "./stores/video";
@@ -59,6 +59,24 @@ const composerError = ref("");
 const createTitle = ref("");
 const createKind = ref<"dm" | "group">("dm");
 const createMembers = ref("");
+const currentLoginPassword = ref("");
+const newLoginPassword = ref("");
+const confirmLoginPassword = ref("");
+const loginPasswordMessage = ref("");
+const loginPasswordError = ref("");
+const showCurrentLoginPassword = ref(false);
+const showNewLoginPassword = ref(false);
+const showConfirmLoginPassword = ref(false);
+const notificationPreferences = ref<NotificationPreferencePayload>({
+  dm_sound: "chime",
+  dm_document_sound: "pulse",
+  video_ring_sound: "alert",
+  chat_leave_sound: "soft",
+});
+const notificationMessage = ref("");
+const notificationError = ref("");
+const statusMessage = ref("");
+const statusError = ref("");
 const newPasscode = ref("");
 const confirmPasscode = ref("");
 const passcodeMessage = ref("");
@@ -85,8 +103,23 @@ function nextMessageIndex(): number {
 const activeMessageIds = new Set<number>();
 let knownConversationIds = new Set<number>();
 let knownMessageIds = new Set<number>();
+let previousConversationIds = new Set<number>();
 let outgoingRingTimer: number | null = null;
 let incomingRingTimer: number | null = null;
+
+const notificationSoundOptions = [
+  { value: "chime", label: "Digital Chime" },
+  { value: "pulse", label: "Mobile Trill" },
+  { value: "alert", label: "Classic Phone Ring" },
+  { value: "soft", label: "Soft Bell" },
+] as const;
+
+const videoRingSoundOptions = [
+  { value: "alert", label: "Classic Phone Ring" },
+  { value: "pulse", label: "Modern Smartphone Ring" },
+  { value: "chime", label: "Desk Bell" },
+  { value: "soft", label: "Gentle Ring" },
+] as const;
 
 const activeConversation = computed(() =>
   chat.conversations.find((c) => c.id === chat.activeConversationId) ?? null,
@@ -94,6 +127,10 @@ const activeConversation = computed(() =>
 const showStartCall = computed(() => Boolean(activeConversation.value) && !video.inCall && !video.hasIncomingCallIntent);
 const showJoinCall = computed(() => Boolean(activeConversation.value) && !video.inCall && video.hasIncomingCallIntent);
 const showEndCall = computed(() => video.inCall || video.status === "testing" || video.status === "active");
+const showEndSignalingTest = computed(() => video.status === "testing");
+const showLocalVideoPane = ref(true);
+const showRemoteVideoPane = ref(true);
+const visibleVideoPaneCount = computed(() => Number(showLocalVideoPane.value) + Number(showRemoteVideoPane.value));
 
 function parseExpectedGroupEpochFromError(error: unknown): number | null {
   const message = error instanceof Error ? error.message : String(error);
@@ -162,47 +199,62 @@ const secondsUntilLock = computed(() => {
   return Math.max(0, security.inactivitySeconds - elapsed);
 });
 
-function playNotificationDing() {
+function playPattern(steps: Array<{ frequency: number; durationMs: number; delayMs?: number }>) {
   try {
     const AudioContextImpl = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextImpl) return;
     const context = new AudioContextImpl();
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(880, context.currentTime);
-    gainNode.gain.setValueAtTime(0.001, context.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.15, context.currentTime + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.22);
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.24);
+
+    steps.forEach((step) => {
+      const startAt = context.currentTime + ((step.delayMs ?? 0) / 1000);
+      const endAt = startAt + step.durationMs / 1000;
+      const oscillator = context.createOscillator();
+      const gainNode = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(step.frequency, startAt);
+      gainNode.gain.setValueAtTime(0.001, startAt);
+      gainNode.gain.exponentialRampToValueAtTime(0.12, startAt + 0.01);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, endAt);
+      oscillator.connect(gainNode);
+      gainNode.connect(context.destination);
+      oscillator.start(startAt);
+      oscillator.stop(endAt);
+    });
   } catch {
     // best-effort only
   }
 }
 
-function playTone(frequency: number, durationMs: number) {
-  try {
-    const AudioContextImpl =
-      window.AudioContext ||
-      (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextImpl) return;
-    const context = new AudioContextImpl();
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(frequency, context.currentTime);
-    gainNode.gain.setValueAtTime(0.001, context.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, context.currentTime + durationMs / 1000);
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + durationMs / 1000);
-  } catch {
-    // best effort
+function playNamedSound(sound: string) {
+  switch (sound) {
+    case "pulse":
+      playPattern([
+        { frequency: 710, durationMs: 130 },
+        { frequency: 790, durationMs: 130, delayMs: 150 },
+        { frequency: 870, durationMs: 130, delayMs: 320 },
+      ]);
+      break;
+    case "alert":
+      playPattern([
+        { frequency: 440, durationMs: 180 },
+        { frequency: 495, durationMs: 180, delayMs: 210 },
+        { frequency: 440, durationMs: 180, delayMs: 820 },
+        { frequency: 495, durationMs: 180, delayMs: 1030 },
+      ]);
+      break;
+    case "soft":
+      playPattern([
+        { frequency: 540, durationMs: 220 },
+        { frequency: 620, durationMs: 180, delayMs: 250 },
+      ]);
+      break;
+    case "chime":
+    default:
+      playPattern([
+        { frequency: 880, durationMs: 170 },
+        { frequency: 1040, durationMs: 150, delayMs: 190 },
+      ]);
+      break;
   }
 }
 
@@ -222,25 +274,30 @@ function stopIncomingRing() {
 
 function startOutgoingRing() {
   if (outgoingRingTimer !== null) return;
-  playTone(740, 220);
+  playPattern([{ frequency: 740, durationMs: 220 }]);
   outgoingRingTimer = window.setInterval(() => {
-    playTone(740, 220);
+    playPattern([{ frequency: 740, durationMs: 220 }]);
   }, 1500);
 }
 
 function startIncomingRing() {
   if (incomingRingTimer !== null) return;
-  playTone(560, 160);
-  window.setTimeout(() => playTone(660, 160), 170);
+  playNamedSound(notificationPreferences.value.video_ring_sound);
   incomingRingTimer = window.setInterval(() => {
-    playTone(560, 160);
-    window.setTimeout(() => playTone(660, 160), 170);
+    playNamedSound(notificationPreferences.value.video_ring_sound);
   }, 2000);
 }
 
-function triggerNotification(conversationId: number, increment = 1) {
-  unreadByConversation.value[conversationId] = (unreadByConversation.value[conversationId] ?? 0) + increment;
-  playNotificationDing();
+function triggerNotification(conversationId: number, kind: "dm" | "document" = "dm", increment = 1, isIncoming = true) {
+  // Only increment unread count if the user is not actively viewing this conversation
+  if (conversationId !== chat.activeConversationId) {
+    unreadByConversation.value[conversationId] = (unreadByConversation.value[conversationId] ?? 0) + increment;
+  }
+  
+  // Always play sound for incoming messages if notifications are ready
+  if (notificationsReady.value && isIncoming) {
+    playNamedSound(kind === "document" ? notificationPreferences.value.dm_document_sound : notificationPreferences.value.dm_sound);
+  }
 }
 
 function clearNotifications() {
@@ -298,7 +355,7 @@ async function refreshConversations(showErrors = false) {
         (c) => c.created_by !== auth.user?.id,
       );
       for (const conversation of newConversations) {
-        triggerNotification(conversation.id, 1);
+        triggerNotification(conversation.id, "dm", 1);
       }
     }
 
@@ -354,6 +411,7 @@ async function ensureDeviceRegistration() {
 async function bootstrap() {
   if (!auth.accessToken) return;
   await auth.loadMe();
+  notificationPreferences.value = await auth.loadNotificationPreferences();
   await loadTestLabBootstrap();
   loadSeenNotificationState();
   await ensureDeviceRegistration();
@@ -440,6 +498,51 @@ async function logout() {
   await auth.logout();
 }
 
+async function updateLoginPassword() {
+  loginPasswordMessage.value = "";
+  loginPasswordError.value = "";
+
+  if (!currentLoginPassword.value || !newLoginPassword.value || !confirmLoginPassword.value) {
+    loginPasswordError.value = "All login password fields are required.";
+    return;
+  }
+
+  if (newLoginPassword.value !== confirmLoginPassword.value) {
+    loginPasswordError.value = "New login passwords do not match.";
+    return;
+  }
+
+  try {
+    const response = await auth.changePassword(
+      currentLoginPassword.value,
+      newLoginPassword.value,
+      confirmLoginPassword.value,
+    );
+    currentLoginPassword.value = "";
+    newLoginPassword.value = "";
+    confirmLoginPassword.value = "";
+    loginPasswordMessage.value = response.detail;
+    await logout();
+  } catch (error) {
+    loginPasswordError.value = error instanceof Error ? error.message : "Failed to update login password";
+  }
+}
+
+function previewNotificationSound(kind: keyof NotificationPreferencePayload) {
+  playNamedSound(notificationPreferences.value[kind]);
+}
+
+async function saveNotificationPreferences() {
+  notificationMessage.value = "";
+  notificationError.value = "";
+  try {
+    notificationPreferences.value = await auth.saveNotificationPreferences(notificationPreferences.value);
+    notificationMessage.value = "Notification sounds updated.";
+  } catch (error) {
+    notificationError.value = error instanceof Error ? error.message : "Failed to save notification sounds";
+  }
+}
+
 async function selectConversation(conversationId: number) {
   if (video.callConversationId && video.callConversationId !== conversationId && video.inCall) {
     await video.endCall();
@@ -450,6 +553,13 @@ async function selectConversation(conversationId: number) {
   if (unreadByConversation.value[conversationId]) {
     delete unreadByConversation.value[conversationId];
   }
+}
+
+async function onConversationSelectionChange(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  const selectedConversationId = Number.parseInt(target.value, 10);
+  if (!Number.isFinite(selectedConversationId)) return;
+  await selectConversation(selectedConversationId);
 }
 
 async function runVideoStreamTest() {
@@ -463,6 +573,10 @@ async function runLoopbackVideoTest() {
 async function runSignalingTest() {
   if (!chat.activeConversationId) return;
   await video.runSignalingTest(chat.activeConversationId);
+}
+
+function endSignalingTest() {
+  video.endSignalingTest();
 }
 
 function toggleVideoDiagnostics(event: Event) {
@@ -568,6 +682,8 @@ async function sendMessage() {
 
     await refreshCurrentConversationMessages();
     draftMessage.value = "";
+    
+    // Removed outgoing message sound to fix asymmetry logic
   } catch (error) {
     composerError.value = error instanceof Error ? error.message : "Failed to send message";
   }
@@ -632,6 +748,8 @@ async function sendEncryptedFile(event: Event) {
       body: formData,
       isFormData: true,
     });
+    
+    // Removed outgoing file upload sound to fix asymmetry logic
   } catch (error) {
     composerError.value = error instanceof Error ? error.message : "Failed to upload file";
   }
@@ -694,8 +812,10 @@ async function createConversation() {
     .filter((v) => v.length > 0);
   await chat.createConversation({ kind: createKind.value, title, memberUsernames });
   const key = await generateConversationKey();
-  if (chat.activeConversationId) {
-    security.setConversationKey(chat.activeConversationId, key);
+  const createdConversationId = chat.activeConversationId;
+  if (createdConversationId) {
+    security.setConversationKey(createdConversationId, key);
+    await selectConversation(createdConversationId);
   }
   createTitle.value = "";
   createMembers.value = "";
@@ -709,6 +829,29 @@ async function deleteActiveConversation() {
     await chat.deleteConversation(chat.activeConversationId);
   } catch (error) {
     composerError.value = error instanceof Error ? error.message : "Failed to delete conversation";
+  }
+}
+
+async function leaveActiveConversation() {
+  if (!chat.activeConversationId) return;
+  const confirmed = window.confirm("Leave this conversation? You will no longer receive messages or be able to participate.");
+  if (!confirmed) return;
+  
+  statusMessage.value = "";
+  statusError.value = "";
+  
+  try {
+    await apiRequest(`/conversations/${chat.activeConversationId}/leave/`, {
+      method: "POST",
+      token: auth.accessToken,
+    });
+    
+    playNamedSound(notificationPreferences.value.chat_leave_sound);
+    statusMessage.value = "Left conversation successfully.";
+    
+    await refreshConversations();
+  } catch (error) {
+    statusError.value = error instanceof Error ? error.message : "Failed to leave conversation";
   }
 }
 
@@ -728,9 +871,12 @@ function startRefreshLoop() {
     window.clearInterval(refreshTimer);
   }
   refreshTimer = window.setInterval(async () => {
-    if (security.locked || !auth.isAuthenticated) return;
+    if (!auth.isAuthenticated) return;
+    // Continue refreshing conversations even when locked to maintain notification counts
     await refreshConversations();
-    await refreshCurrentConversationMessages();
+    if (!security.locked) {
+      await refreshCurrentConversationMessages();
+    }
   }, 3000);
 }
 
@@ -804,32 +950,85 @@ watch(
   () => chat.conversations.map((c) => c.id),
   (conversationIds) => {
     const allowed = new Set(conversationIds);
+    if (notificationsReady.value && previousConversationIds.size > 0) {
+      const removed = [...previousConversationIds].filter((id) => !allowed.has(id));
+      if (removed.length > 0) {
+        playNamedSound(notificationPreferences.value.chat_leave_sound);
+      }
+    }
     for (const key of Object.keys(unreadByConversation.value)) {
       const id = Number(key);
       if (!allowed.has(id)) {
         delete unreadByConversation.value[id];
       }
     }
+    previousConversationIds = allowed;
+  },
+  { deep: true },
+);
+
+// Helper to parse whether a message is an attachment
+function isMessageDocument(message: any): boolean {
+  return Boolean(message.attachments?.length) || (message.plaintext && message.plaintext.startsWith("[file]"));
+}
+
+watch(
+  () => chat.messagesByConversation,
+  (messagesMap) => {
+    let hasNewIncoming = false;
+    for (const [convIdStr, messages] of Object.entries(messagesMap)) {
+      const convId = Number(convIdStr);
+      if (!messages || !Array.isArray(messages)) continue;
+
+      // Extract unseen messages specific to this array
+      const unseenMessages = messages.filter((m) => !knownMessageIds.has(m.id));
+      
+      // Of those unseen, filter for actual new incoming messages (from someone else)
+      const newIncoming = unseenMessages.filter((m) => m.sender !== auth.user?.id);
+
+      // Track ALL unseen messages so we don't process them again
+      unseenMessages.forEach((m) => knownMessageIds.add(m.id));
+
+      // Only trigger sounds/badges if notifications are ready AND we actually have incoming messages
+      if (newIncoming.length > 0 && notificationsReady.value) {
+        hasNewIncoming = true;
+        for (const message of newIncoming) {
+          const isDocumentEvent = Boolean(message.attachments?.length) || (message.plaintext && message.plaintext.startsWith("[file]"));
+          triggerNotification(convId, isDocumentEvent ? "document" : "dm", 1, true);
+        }
+      }
+    }
+
+    // Save state if we processed new incoming messages OR new outgoing messages
+    saveSeenNotificationState();
   },
   { deep: true },
 );
 
 watch(
-  () => chat.activeMessages,
-  (messages) => {
-    const unseenMessages = messages.filter((m) => !knownMessageIds.has(m.id));
-    const newIncoming = unseenMessages.filter((m) => m.sender !== auth.user?.id);
-
-    messages.forEach((m) => activeMessageIds.add(m.id));
-    unseenMessages.forEach((m) => knownMessageIds.add(m.id));
-    saveSeenNotificationState();
-
-    if (!notificationsReady.value) return;
-    for (const message of newIncoming) {
-      triggerNotification(message.conversation, 1);
+  () => chat.activeConversationId,
+  async (conversationId) => {
+    activeMessageIds.clear();
+    chat.activeMessages.forEach((m) => activeMessageIds.add(m.id));
+    if (conversationId && !video.inCall) {
+      await loadConversationMembers(conversationId);
+      await video.listenForIncoming(conversationId);
+    }
+    // Clear unread count when switching to this conversation
+    if (conversationId && unreadByConversation.value[conversationId]) {
+      delete unreadByConversation.value[conversationId];
     }
   },
-  { deep: true },
+);
+
+// We still need to track active message IDs for the UI loop
+watch(
+  () => chat.activeMessages,
+  (messages) => {
+    activeMessageIds.clear();
+    messages.forEach((m) => activeMessageIds.add(m.id));
+  },
+  { deep: true }
 );
 
 function updatePasscode() {
@@ -952,17 +1151,19 @@ onUnmounted(() => {
     <main v-else class="layout">
       <aside class="sidebar card">
         <h3>Conversations</h3>
-        <ul>
-          <li v-for="conversation in chat.conversations" :key="conversation.id">
-            <button
-              class="conversation-btn"
-              :class="{ active: conversation.id === chat.activeConversationId }"
-              @click="selectConversation(conversation.id)"
-            >
-              {{ conversation.title || `${conversation.kind} #${conversation.id}` }}
-            </button>
-          </li>
-        </ul>
+        <label class="conversation-select-label" for="conversation-select">Select conversation</label>
+        <select
+          id="conversation-select"
+          class="conversation-select"
+          :value="String(chat.activeConversationId ?? '')"
+          size="8"
+          @change="onConversationSelectionChange"
+        >
+          <option v-if="chat.conversations.length === 0" value="" disabled>No conversations yet</option>
+          <option v-for="conversation in chat.conversations" :key="conversation.id" :value="String(conversation.id)">
+            {{ conversation.title || `${conversation.kind} #${conversation.id}` }}{{ unreadByConversation[conversation.id] ? ` (${unreadByConversation[conversation.id]})` : '' }}
+          </option>
+        </select>
         <div class="new-conversation">
           <h4>New conversation</h4>
           <select v-model="createKind">
@@ -974,41 +1175,132 @@ onUnmounted(() => {
           <button @click="createConversation">Create</button>
         </div>
 
-        <div class="new-conversation">
-          <h4>Change lock passcode</h4>
-          <div class="password-field-row">
-            <input
-              v-model="newPasscode"
-              :type="showNewPasscode ? 'text' : 'password'"
-              placeholder="New passcode"
-              autocomplete="new-password"
-              name="new-lock-passcode"
-            />
-            <button class="ghost password-toggle" type="button" @click="showNewPasscode = !showNewPasscode">
-              {{ showNewPasscode ? "🙈" : "👁" }}
-            </button>
+        <details class="new-conversation settings-collapsible">
+          <summary>Notification sounds</summary>
+          <div class="settings-content">
+            <label>
+              DM message
+              <div class="inline-preference-row">
+                <select v-model="notificationPreferences.dm_sound">
+                  <option v-for="option in notificationSoundOptions" :key="`dm-${option.value}`" :value="option.value">{{ option.label }}</option>
+                </select>
+                <button class="ghost" type="button" @click="previewNotificationSound('dm_sound')">Preview</button>
+              </div>
+            </label>
+            <label>
+              DM document/file
+              <div class="inline-preference-row">
+                <select v-model="notificationPreferences.dm_document_sound">
+                  <option v-for="option in notificationSoundOptions" :key="`doc-${option.value}`" :value="option.value">{{ option.label }}</option>
+                </select>
+                <button class="ghost" type="button" @click="previewNotificationSound('dm_document_sound')">Preview</button>
+              </div>
+            </label>
+            <label>
+              Video incoming ring
+              <div class="inline-preference-row">
+                <select v-model="notificationPreferences.video_ring_sound">
+                  <option v-for="option in videoRingSoundOptions" :key="`video-${option.value}`" :value="option.value">{{ option.label }}</option>
+                </select>
+                <button class="ghost" type="button" @click="previewNotificationSound('video_ring_sound')">Preview</button>
+              </div>
+            </label>
+            <label>
+              User left chat
+              <div class="inline-preference-row">
+                <select v-model="notificationPreferences.chat_leave_sound">
+                  <option v-for="option in notificationSoundOptions" :key="`leave-${option.value}`" :value="option.value">{{ option.label }}</option>
+                </select>
+                <button class="ghost" type="button" @click="previewNotificationSound('chat_leave_sound')">Preview</button>
+              </div>
+            </label>
+            <button @click="saveNotificationPreferences">Save notification sounds</button>
+            <p v-if="notificationMessage" class="muted">{{ notificationMessage }}</p>
+            <p v-if="notificationError" class="error">{{ notificationError }}</p>
           </div>
-          <div class="password-field-row">
-            <input
-              v-model="confirmPasscode"
-              :type="showConfirmPasscode ? 'text' : 'password'"
-              placeholder="Confirm passcode"
-              autocomplete="new-password"
-              name="confirm-lock-passcode"
-            />
-            <button class="ghost password-toggle" type="button" @click="showConfirmPasscode = !showConfirmPasscode">
-              {{ showConfirmPasscode ? "🙈" : "👁" }}
-            </button>
+        </details>
+
+        <details class="new-conversation settings-collapsible">
+          <summary>Security settings</summary>
+          <div class="settings-content">
+            <h4>Change login password</h4>
+            <div class="password-field-row">
+              <input
+                v-model="currentLoginPassword"
+                :type="showCurrentLoginPassword ? 'text' : 'password'"
+                placeholder="Current login password"
+                autocomplete="current-password"
+                name="current-login-password"
+              />
+              <button class="ghost password-toggle" type="button" @click="showCurrentLoginPassword = !showCurrentLoginPassword">
+                {{ showCurrentLoginPassword ? "🙈" : "👁" }}
+              </button>
+            </div>
+            <div class="password-field-row">
+              <input
+                v-model="newLoginPassword"
+                :type="showNewLoginPassword ? 'text' : 'password'"
+                placeholder="New login password"
+                autocomplete="new-password"
+                name="new-login-password"
+              />
+              <button class="ghost password-toggle" type="button" @click="showNewLoginPassword = !showNewLoginPassword">
+                {{ showNewLoginPassword ? "🙈" : "👁" }}
+              </button>
+            </div>
+            <div class="password-field-row">
+              <input
+                v-model="confirmLoginPassword"
+                :type="showConfirmLoginPassword ? 'text' : 'password'"
+                placeholder="Confirm new login password"
+                autocomplete="new-password"
+                name="confirm-login-password"
+                @keydown.enter="updateLoginPassword"
+              />
+              <button class="ghost password-toggle" type="button" @click="showConfirmLoginPassword = !showConfirmLoginPassword">
+                {{ showConfirmLoginPassword ? "🙈" : "👁" }}
+              </button>
+            </div>
+            <button @click="updateLoginPassword">Update login password</button>
+            <p v-if="loginPasswordMessage" class="muted">{{ loginPasswordMessage }}</p>
+            <p v-if="loginPasswordError" class="error">{{ loginPasswordError }}</p>
+
+            <h4>Change lock passcode</h4>
+            <div class="password-field-row">
+              <input
+                v-model="newPasscode"
+                :type="showNewPasscode ? 'text' : 'password'"
+                placeholder="New passcode"
+                autocomplete="new-password"
+                name="new-lock-passcode"
+              />
+              <button class="ghost password-toggle" type="button" @click="showNewPasscode = !showNewPasscode">
+                {{ showNewPasscode ? "🙈" : "👁" }}
+              </button>
+            </div>
+            <div class="password-field-row">
+              <input
+                v-model="confirmPasscode"
+                :type="showConfirmPasscode ? 'text' : 'password'"
+                placeholder="Confirm passcode"
+                autocomplete="new-password"
+                name="confirm-lock-passcode"
+              />
+              <button class="ghost password-toggle" type="button" @click="showConfirmPasscode = !showConfirmPasscode">
+                {{ showConfirmPasscode ? "🙈" : "👁" }}
+              </button>
+            </div>
+            <button @click="updatePasscode">Update passcode</button>
+            <p v-if="passcodeMessage" class="muted">{{ passcodeMessage }}</p>
           </div>
-          <button @click="updatePasscode">Update passcode</button>
-          <p v-if="passcodeMessage" class="muted">{{ passcodeMessage }}</p>
-        </div>
+        </details>
       </aside>
 
       <section class="chat card">
         <header class="chat-head">
           <div>
             <h3>{{ activeConversation?.title || "No conversation selected" }}</h3>
+            <button v-if="activeConversation" @click="leaveActiveConversation">Leave conversation</button>
             <button v-if="activeConversation" class="danger" @click="deleteActiveConversation">Delete conversation</button>
             <button
               v-if="activeConversation && activeConversation.kind === 'dm'"
@@ -1031,6 +1323,11 @@ onUnmounted(() => {
           <button class="ghost" @click="refreshConversations(true)">Refresh conversations</button>
         </header>
 
+        <div v-if="statusMessage || statusError" class="status-messages">
+          <p v-if="statusMessage" class="muted">{{ statusMessage }}</p>
+          <p v-if="statusError" class="error">{{ statusError }}</p>
+        </div>
+
         <section class="video-panel" v-if="activeConversation">
           <div class="video-head">
             <strong>Video Stream</strong>
@@ -1046,23 +1343,27 @@ onUnmounted(() => {
               </label>
             </div>
           </div>
-          <div class="video-grid">
-            <div class="video-frame">
+          <div class="video-grid" :class="{ 'single-pane': visibleVideoPaneCount === 1 }">
+            <div v-if="showLocalVideoPane" class="video-frame">
               <video ref="localVideoEl" autoplay playsinline muted></video>
               <span>Local</span>
             </div>
-            <div class="video-frame">
+            <div v-if="showRemoteVideoPane" class="video-frame">
               <video ref="remoteVideoEl" autoplay playsinline></video>
               <span>Remote</span>
             </div>
+            <div v-if="visibleVideoPaneCount === 0" class="video-pane-hidden">Both video panes are hidden</div>
           </div>
           <div class="video-actions">
             <button v-if="showStartCall" @click="startVideoCall">Start Call</button>
             <button v-if="showJoinCall" class="join-btn" @click="joinVideoCall">Join Call</button>
             <button v-if="video.localStream" class="ghost" @click="toggleMic">{{ video.micEnabled ? "Mute" : "Unmute" }}</button>
             <button v-if="video.localStream" class="ghost" @click="toggleCamera">{{ video.cameraEnabled ? "Camera Off" : "Camera On" }}</button>
+            <button class="ghost" @click="showLocalVideoPane = !showLocalVideoPane">{{ showLocalVideoPane ? "Hide Local Pane" : "Show Local Pane" }}</button>
+            <button class="ghost" @click="showRemoteVideoPane = !showRemoteVideoPane">{{ showRemoteVideoPane ? "Hide Remote Pane" : "Show Remote Pane" }}</button>
             <button v-if="showEndCall" class="danger" @click="endVideoCall">End</button>
           </div>
+          <div class="muted video-visibility-note">Pane visibility only affects this screen and does not mute/stop media transmission.</div>
           <div v-if="video.diagnosticsEnabled" class="video-diagnostics-panel">
             <div>Local FPS: {{ formattedVideoDiagnostics.localFps }}</div>
             <div>Remote FPS: {{ formattedVideoDiagnostics.remoteFps }}</div>
@@ -1087,6 +1388,7 @@ onUnmounted(() => {
             <div class="video-actions">
               <button class="ghost" @click="runVideoStreamTest">Test Camera/Mic</button>
               <button class="ghost" @click="runSignalingTest">Signaling Test</button>
+              <button v-if="showEndSignalingTest" class="danger" @click="endSignalingTest">End Signaling Test</button>
               <button class="ghost" @click="runLoopbackVideoTest">Local Loopback Test</button>
             </div>
           </details>

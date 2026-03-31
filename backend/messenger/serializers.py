@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
@@ -13,6 +14,7 @@ from .models import (
     Device,
     MessageEnvelope,
     SessionEvent,
+    UserNotificationPreference,
     Workspace,
     WorkspaceMembership,
 )
@@ -27,6 +29,29 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False, min_length=8)
+    confirm_new_password = serializers.CharField(write_only=True, trim_whitespace=False, min_length=8)
+
+    def validate_current_password(self, value: str) -> str:
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_new_password"]:
+            raise serializers.ValidationError({"confirm_new_password": ["New passwords do not match."]})
+
+        user = self.context["request"].user
+        validate_password(attrs["new_password"], user=user)
+
+        if attrs["current_password"] == attrs["new_password"]:
+            raise serializers.ValidationError({"new_password": ["New password must be different from current password."]})
+        return attrs
 
 
 class DeviceSerializer(serializers.ModelSerializer):
@@ -199,3 +224,14 @@ class SessionEventSerializer(serializers.ModelSerializer):
         model = SessionEvent
         fields = ("id", "user", "device", "event_type", "metadata", "created_at")
         read_only_fields = ("user", "created_at")
+
+
+class UserNotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserNotificationPreference
+        fields = (
+            "dm_sound",
+            "dm_document_sound",
+            "video_ring_sound",
+            "chat_leave_sound",
+        )

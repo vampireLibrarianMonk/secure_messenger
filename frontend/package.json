@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "pinia": "^2.1.7",
@@ -15,8 +17,12 @@
   "devDependencies": {
     "@types/node": "^22.7.5",
     "@vitejs/plugin-vue": "^5.1.4",
+    "@vitest/ui": "^4.1.2",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^29.0.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
+    "vitest": "^4.1.2",
     "vue-tsc": "^2.1.6"
   }
 }
