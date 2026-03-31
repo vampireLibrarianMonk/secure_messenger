@@ -1,0 +1,7 @@
+secure-chat.my-deployment.com {
+  @api path /api/* /ws/*
+
+  reverse_proxy @api secure-chat-backend:8000
+
+  reverse_proxy secure-chat-frontend:80
+}
