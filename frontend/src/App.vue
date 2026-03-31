@@ -191,11 +191,20 @@ const formattedVideoDiagnostics = computed(() => {
 
 function bindActivityListeners() {
   const touch = () => security.touch();
+  const warmAudio = () => {
+    getAudioContext();
+    window.removeEventListener("click", warmAudio);
+    window.removeEventListener("keydown", warmAudio);
+  };
   window.addEventListener("mousemove", touch);
   window.addEventListener("keydown", touch);
+  window.addEventListener("click", warmAudio);
+  window.addEventListener("keydown", warmAudio);
   return () => {
     window.removeEventListener("mousemove", touch);
     window.removeEventListener("keydown", touch);
+    window.removeEventListener("click", warmAudio);
+    window.removeEventListener("keydown", warmAudio);
   };
 }
 
@@ -368,6 +377,19 @@ async function refreshConversations(showErrors = false) {
       );
       for (const conversation of newConversations) {
         triggerNotification(conversation.id, "dm", 1);
+      }
+
+      // Detect new messages in existing (non-active) conversations
+      for (const conversation of chat.conversations) {
+        if (conversation.id === chat.activeConversationId) continue;
+        if (!conversation.last_message_id) continue;
+        if (knownMessageIds.has(conversation.last_message_id)) continue;
+        if (conversation.last_message_sender === auth.user?.id) {
+          knownMessageIds.add(conversation.last_message_id);
+          continue;
+        }
+        knownMessageIds.add(conversation.last_message_id);
+        triggerNotification(conversation.id, "dm", 1, true);
       }
     }
 

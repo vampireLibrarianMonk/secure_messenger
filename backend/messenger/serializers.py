@@ -96,10 +96,21 @@ class ChannelSerializer(serializers.ModelSerializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
+    last_message_id = serializers.SerializerMethodField()
+    last_message_sender = serializers.SerializerMethodField()
+
     class Meta:
         model = Conversation
-        fields = ("id", "workspace", "channel", "kind", "title", "created_by", "created_at")
+        fields = ("id", "workspace", "channel", "kind", "title", "created_by", "created_at", "last_message_id", "last_message_sender")
         read_only_fields = ("created_by", "created_at")
+
+    def get_last_message_id(self, obj):
+        msg = obj.messages.order_by("-created_at").values("id").first()
+        return msg["id"] if msg else None
+
+    def get_last_message_sender(self, obj):
+        msg = obj.messages.order_by("-created_at").values("sender_id").first()
+        return msg["sender_id"] if msg else None
 
 
 class ConversationMemberSerializer(serializers.ModelSerializer):

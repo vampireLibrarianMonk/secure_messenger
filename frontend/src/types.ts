@@ -32,6 +32,8 @@ export interface Conversation {
   title: string;
   created_by: number;
   created_at: string;
+  last_message_id: number | null;
+  last_message_sender: number | null;
 }
 
 export interface Attachment {
