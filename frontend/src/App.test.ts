@@ -3,12 +3,19 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import App from './App.vue'
 
-// Mock the stores
+// Mutable chat state so tests can manipulate conversations
+const chatState = {
+  conversations: [] as any[],
+  activeConversationId: null as number | null,
+  activeMessages: [] as any[],
+  messagesByConversation: {} as Record<number, any[]>,
+}
+
 vi.mock('./stores/auth', () => ({
   useAuthStore: () => ({
     isAuthenticated: false,
-    user: null,
-    accessToken: null,
+    user: { id: 10, username: 'testuser', email: 'test@example.com' },
+    accessToken: 'mock-token',
     login: vi.fn(),
     logout: vi.fn(),
     loadMe: vi.fn(),
@@ -25,10 +32,12 @@ vi.mock('./stores/auth', () => ({
 
 vi.mock('./stores/chat', () => ({
   useChatStore: () => ({
-    conversations: [],
-    activeConversationId: null,
-    activeMessages: [],
-    messagesByConversation: {},
+    get conversations() { return chatState.conversations },
+    set conversations(v) { chatState.conversations = v },
+    get activeConversationId() { return chatState.activeConversationId },
+    set activeConversationId(v) { chatState.activeConversationId = v },
+    get activeMessages() { return chatState.activeMessages },
+    get messagesByConversation() { return chatState.messagesByConversation },
     loadConversations: vi.fn(),
     createConversation: vi.fn(),
     deleteConversation: vi.fn(),
@@ -101,27 +110,23 @@ vi.mock('./lib/crypto', () => ({
   decryptFile: vi.fn(),
   encryptFile: vi.fn(),
   encryptText: vi.fn(),
-  exportPublicKey: vi.fn(),
+  exportPublicKey: vi.fn(() => 'mock-public-key'),
   generateConversationKey: vi.fn(() => 'mock-key'),
-  generateIdentityKeypair: vi.fn(),
+  generateIdentityKeypair: vi.fn(() => Promise.resolve({ publicKey: 'mock-pub', privateKey: 'mock-priv' })),
 }))
 
 vi.mock('./components/AdminTestLabPanel.vue', () => ({
   default: { template: '<div>Mock Admin Panel</div>' }
 }))
 
-// Track all oscillator creations globally across AudioContext mocks
 let oscillatorCalls: number
 let resumeCalls: number
-let constructorCalls: number
 
 function installAudioMock(initialState = 'running') {
   oscillatorCalls = 0
   resumeCalls = 0
-  constructorCalls = 0
 
   global.AudioContext = vi.fn().mockImplementation(function (this: any) {
-    constructorCalls++
     this.currentTime = 0
     this.state = initialState
     this.destination = {}
@@ -146,9 +151,17 @@ function installAudioMock(initialState = 'running') {
   }) as any
 }
 
+function resetChatState() {
+  chatState.conversations = []
+  chatState.activeConversationId = null
+  chatState.activeMessages = []
+  chatState.messagesByConversation = {}
+}
+
 describe('App Component', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    resetChatState()
   })
 
   it('renders login form when not authenticated', () => {
@@ -184,6 +197,7 @@ describe('App Component', () => {
 describe('Notification Sound Playback', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    resetChatState()
     installAudioMock()
   })
 
@@ -202,7 +216,7 @@ describe('Notification Sound Playback', () => {
 
     vm.notificationsReady = true
     vm.triggerNotification(2, 'dm', 1, true)
-    // chime pattern has 2 oscillator notes
+    // chime pattern = 2 oscillator notes
     expect(oscillatorCalls).toBe(2)
   })
 
@@ -212,7 +226,7 @@ describe('Notification Sound Playback', () => {
 
     vm.notificationsReady = true
     vm.triggerNotification(2, 'document', 1, true)
-    // pulse pattern has 3 oscillator notes
+    // pulse pattern = 3 oscillator notes
     expect(oscillatorCalls).toBe(3)
   })
 
@@ -231,5 +245,138 @@ describe('Notification Sound Playback', () => {
 
     vm.playNamedSound('soft')
     expect(oscillatorCalls).toBe(11) // +2
+  })
+})
+
+describe('Non-Active Conversation Notifications', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetChatState()
+    installAudioMock()
+  })
+
+  it('refreshConversations triggers notification for new incoming message on non-active conversation', async () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    chatState.activeConversationId = 1
+
+    // First pass: seed known conversations with no messages (notifications off)
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 99, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+    ]
+    await vm.refreshConversations()
+
+    // Now enable notifications and simulate a new message arriving on conv 2
+    vm.notificationsReady = true
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 99, created_at: '', workspace: null, channel: null, last_message_id: 500, last_message_sender: 99 },
+    ]
+
+    await vm.refreshConversations()
+
+    expect(vm.unreadByConversation[2]).toBe(1)
+    // chime = 2 oscillators
+    expect(oscillatorCalls).toBe(2)
+  })
+
+  it('refreshConversations does not trigger notification for own message on non-active conversation', async () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    chatState.activeConversationId = 1
+
+    // Seed known conversations
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+    ]
+    await vm.refreshConversations()
+
+    vm.notificationsReady = true
+
+    // Message from self (user id 10) on conv 2
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: 600, last_message_sender: 10 },
+    ]
+
+    await vm.refreshConversations()
+
+    expect(vm.unreadByConversation[2]).toBeUndefined()
+    expect(oscillatorCalls).toBe(0)
+  })
+
+  it('refreshConversations does not double-count the same last_message_id', async () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    chatState.activeConversationId = 1
+
+    // Seed known conversations
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 99, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+    ]
+    await vm.refreshConversations()
+
+    vm.notificationsReady = true
+
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+      { id: 2, kind: 'dm', title: 'other', created_by: 99, created_at: '', workspace: null, channel: null, last_message_id: 700, last_message_sender: 99 },
+    ]
+
+    await vm.refreshConversations()
+    expect(vm.unreadByConversation[2]).toBe(1)
+
+    // Call again with same last_message_id — should not increment
+    oscillatorCalls = 0
+    await vm.refreshConversations()
+    expect(vm.unreadByConversation[2]).toBe(1)
+    expect(oscillatorCalls).toBe(0)
+  })
+
+  it('refreshConversations skips active conversation', async () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    chatState.activeConversationId = 1
+
+    // Seed
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: null, last_message_sender: null },
+    ]
+    await vm.refreshConversations()
+
+    vm.notificationsReady = true
+
+    // New message on the active conversation — should be handled by WebSocket watcher, not here
+    chatState.conversations = [
+      { id: 1, kind: 'dm', title: 'active', created_by: 10, created_at: '', workspace: null, channel: null, last_message_id: 800, last_message_sender: 99 },
+    ]
+
+    await vm.refreshConversations()
+
+    expect(vm.unreadByConversation[1]).toBeUndefined()
+    expect(oscillatorCalls).toBe(0)
+  })
+})
+
+describe('AudioContext Warm-up', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    resetChatState()
+    installAudioMock('suspended')
+  })
+
+  it('resumes suspended AudioContext when playing sound', () => {
+    const wrapper = mount(App)
+    const vm = wrapper.vm as any
+
+    vm.playNamedSound('chime')
+    expect(resumeCalls).toBeGreaterThan(0)
   })
 })

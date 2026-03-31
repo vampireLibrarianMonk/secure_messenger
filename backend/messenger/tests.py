@@ -286,6 +286,40 @@ class MessagingTests(TestCase):
         self.assertIn(first_key, fetched.data[0]["aad"])
         self.assertIn(second_key, fetched.data[1]["aad"])
 
+    def test_conversation_list_includes_last_message_fields(self):
+        conversation = Conversation.objects.create(kind=Conversation.TYPE_DM, title="dm", created_by=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.user)
+        ConversationMember.objects.create(conversation=conversation, user=self.other)
+
+        # No messages yet
+        response = self.client.get("/api/conversations/")
+        self.assertEqual(response.status_code, 200)
+        conv_data = next(c for c in response.data if c["id"] == conversation.id)
+        self.assertIsNone(conv_data["last_message_id"])
+        self.assertIsNone(conv_data["last_message_sender"])
+
+        # Alice sends a message
+        msg = MessageEnvelope.objects.create(
+            conversation=conversation, sender=self.user,
+            ciphertext="ZmFrZQ==", nonce=b64_bytes(12), aad="", message_index=1,
+        )
+
+        response = self.client.get("/api/conversations/")
+        conv_data = next(c for c in response.data if c["id"] == conversation.id)
+        self.assertEqual(conv_data["last_message_id"], msg.id)
+        self.assertEqual(conv_data["last_message_sender"], self.user.id)
+
+        # Bob sends a newer message — last_message should update
+        msg2 = MessageEnvelope.objects.create(
+            conversation=conversation, sender=self.other,
+            ciphertext="ZmFrZQ==", nonce=b64_bytes(12), aad="", message_index=2,
+        )
+
+        response = self.client.get("/api/conversations/")
+        conv_data = next(c for c in response.data if c["id"] == conversation.id)
+        self.assertEqual(conv_data["last_message_id"], msg2.id)
+        self.assertEqual(conv_data["last_message_sender"], self.other.id)
+
 
 class AttachmentSecurityTests(TestCase):
     def setUp(self):

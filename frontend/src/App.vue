@@ -1113,10 +1113,12 @@ defineExpose({
   playNamedSound,
   playPattern,
   triggerNotification,
+  refreshConversations,
   notificationsReady,
   notificationPreferences,
   notificationSoundOptions,
   videoRingSoundOptions,
+  unreadByConversation,
 });
 </script>
 
